@@ -1,4 +1,3 @@
-console.log("Hello from knitout-viz");
 //protect rest of document from spurious variables:
 /*DEBUG, don't: (function(){ */
 
@@ -21,8 +20,7 @@ function parseKnitout(codeText, machine) {
 			warnings.push({lineNumber:lineNumber, text:info});
 		}
 
-		//comment header -- TODO
-
+		//magic first line:
 		if (lineNumber == 0) {
 			//knitout must begin with ';!knitout-N'.
 			var m = line.match(/^;!knitout-(\d+)$/);
@@ -37,7 +35,7 @@ function parseKnitout(codeText, machine) {
 			return;
 		}
 
-		//does the line look like a comment header line?
+		//comment header lines:
 		var m = line.match(/^;;([^:]+): (.*)$/);
 		if (m !== null) {
 			if (!inCommentHeader) {
@@ -67,7 +65,7 @@ function parseKnitout(codeText, machine) {
 		var tokens = m[1].split(/[ \t]+/);
 		var comment = m[2];
 
-		//TODO: handle !source: directive in comment?
+		//TODO: handle !source: directive in comment
 
 		//trim leading/trailing whitespace from operation token list:
 		if (tokens.length !== 0 && tokens[0] === "") tokens.shift();
@@ -92,7 +90,7 @@ function parseKnitout(codeText, machine) {
 				}
 				usedAlready[name] = true;
 			});
-			return tokens.splice();
+			return tokens.slice();
 		}
 		function parseStitchValue(token) {
 			if (!/^[-+]?(\.\d+|\d+.\d*|\d+)$/.test(token)) {
@@ -195,6 +193,132 @@ function parseKnitout(codeText, machine) {
 
 //RecordMachine is an abstract knitting machine that records the loop structure of a knitout document:
 
+const CARD_HEIGHT = 1.0; //height of cards
+const CARD_GAP = 0.1; //minimum x/y space between cards
+const CARD_SIDE_WIDTH = 1.0;
+const CARD_CENTER_WIDTH = 2.2;
+
+
+//Idea: the machine keeps track of a stack of "tiles" below each needle.
+// Tiles are a stack of loop operation cards.
+// Tiles may participate in more than one layer.
+// Visualization is managed so that the volume of a tile is never overlapped by the volume of another tile.
+// "Cards" in a tile have ten types of edges, though for a give tile type (side/needle) there are only six:
+// left/right yarn connections
+// in/out loop connections (needle tiles only)
+// in/out yarn connections (side tiles only)
+// up/down loop connections (needle tiles only)
+// up/down yarn connections (side tiles only)
+
+function Tile() {
+	this.cards = []; //back-to-front
+	//TODO: y-ordering constraints? this.constraints = []; // {other:Tile, over:bool}
+}
+
+//helpful directional tags for ports:
+const PORT_LEFT  = 'l';
+const PORT_RIGHT = 'r';
+const PORT_UP    = 'u';
+const PORT_DOWN  = 'd';
+const PORT_IN    = 'i';
+const PORT_OUT   = 'o';
+
+function Card() {
+	this.stackName = ''; //which stack is this card actually in? (Tiles can span multiple stacks.)
+	this.yarns = []; //for drawing; have start:port, end:port;
+	this.ports = []; //note: in left-to-right order for loop ports
+}
+
+function Port(type) {
+	this.type = type;
+	//this.card = card; //owner card, eventually?
+	//this.yarn = ; //eventually, set also the yarn in the owner card?
+	this.other = null; //connected port
+}
+
+function connectPorts(portA, portB) {
+	con = portA.type + portB.type;
+	console.assert(con === "lr" || con == "rl" || con == "ud" || con == "du" || con == "io" || con == "oi");
+	//actual connection: TODO
+}
+
+//various types of cards:
+function makeKnitFrontYarnCard() {
+	//
+	//  l---o  o---r
+	//
+	//the yarns part of a knit-front.
+	var card = new Card();
+	card.ports.push(new Port(PORT_LEFT));
+	card.ports.push(new Port(PORT_OUT));
+	card.ports.push(new Port(PORT_OUT));
+	card.ports.push(new Port(PORT_RIGHT));
+
+	card.yarns.push({
+		start:card.ports[0],
+		points:[{x:0.0, y:0.5}, {x:1.0/3.0+0.1, y:0.5-0.1}],
+		end:card.ports[1]
+	});
+
+	card.yarns.push({
+		start:card.ports[2],
+		points:[{x:2.0/3.0-0.1, y:0.5-0.1}, {x:1.0, y:0.5}],
+		end:card.ports[3]
+	});
+
+	return card;
+}
+
+function makeKnitFrontLoopCard() {
+    //      u  u
+	//      |  |
+	//      i  i
+	//
+	//the loop part of a knit-front, comes from behind, leaves up
+	var card = new Card();
+	card.ports.push(new Port(PORT_IN));
+	card.ports.push(new Port(PORT_UP));
+	card.ports.push(new Port(PORT_UP));
+	card.ports.push(new Port(PORT_IN));
+
+	card.yarns.push({
+		start:card.ports[0],
+		points:[{x:1.0/3.0+0.1, y:0.5-0.1}, {x:1.0/3.0, y:1.0}],
+		end:card.ports[1]
+	});
+
+	card.yarns.push({
+		start:card.ports[2],
+		points:[{x:2.0/3.0, y:1.0}, {x:2.0/3.0-0.1, y:0.5-0.1}],
+		end:card.ports[3]
+	});
+
+	return card;
+}
+
+
+function makeLoopCard() {
+	//
+    //      .--.
+	//      |  |
+	//      d  d
+	//a loop of yarn, comes from down.
+	var card = new Card();
+	card.ports.push(new Port(PORT_DOWN));
+	card.ports.push(new Port(PORT_DOWN));
+
+	card.yarns.push({
+		start:card.ports[0],
+		points:[{x:1.0/3.0, y:0.0}, {x:1.0/3.0, y:0.5}, {x:2.0/3.0, y:0.5}, {x:2.0/3.0, y:0.0}],
+		end:card.ports[1]
+	});
+
+	return card;
+}
+
+//loop edges between cards are always clear from stack order
+//yarn edges between cards are always to adjacent stacks(?) and might also be clear(??)
+
 function RecordMachine() {
 	//name -> carriers map starts empty:
 	this.carriers = {};
@@ -204,6 +328,18 @@ function RecordMachine() {
 	this.racking = 0.0;
 	//stitch values start zeroed:
 	this.stitchValues = [0.0, 0.0];
+
+	//knit object state tracked by tile stacks, which are referenced by layer + integer:
+	this.stacks = {};
+}
+
+//there are stacks -/./+ of every needle on every layer:
+RecordMachine.prototype.getStack = function(layer, index, side) {
+	var key = layer + index + side;
+	if (!(key in this.stacks)) {
+		this.stacks[key] = [];
+	}
+	return this.stacks[key];
 }
 
 //set the carriers in front-to-back order; carriers start out of action at the right:
@@ -223,9 +359,9 @@ function parseNeedle(n) {
 	var m = n.match(/^([fb])(s?)([-+]?\d+)$/);
 	console.assert(m !== null, "needle should always be parseable");
 	return {
-		bed:match[1],
-		slider:(match[2] === "s"),
-		index:parseInt(match[3])
+		bed:m[1],
+		slider:(m[2] === "s"),
+		index:parseInt(m[3])
 	};
 }
 
@@ -372,12 +508,66 @@ RecordMachine.prototype.rack = function(r) {
 	this.racking = r;
 };
 RecordMachine.prototype.knit = function(d, n, cs) {
+	var bsi = parseNeedle(n);
+	if (bsi.slider) throw "Can't knit on a slider.";
+
 	//bring in carriers if needed:
 	this.bringInIfNeeded(d, n, cs);
 
 	//TODO: kick other carriers
 	//TODO: move carriers (might make yarn overlaps?)
-	//TODO: add stitch block to diagram
+
+	cs.forEach(function(cn){
+		var c = this.carriers[cn];
+		c.last = n + d; //TODO: should probably be a reference to a tile, card, or port.
+	}, this);
+
+	//build card stack for knit:
+	var cards = []; //back-to-front
+
+	cs.forEach(function(cn){
+		var card = (bsi.bed === 'f' ? makeKnitFrontYarnCard() : makeKnitBackLoopCard());
+		//TODO: connect ports
+		cards.push(card);
+	}, this);
+
+	//core of stack is loops from previous 
+	var stack = this.getStack(bsi.bed, bsi.index, '.');
+	if (stack.length) {
+		stack[stack.length-1].cards.forEach(function(card){
+			var ups = [];
+			card.ports.forEach(function(port){
+				if (port.type === PORT_UP) {
+					ups.push(port);
+				}
+			});
+			console.assert(ups.length === 0 || ups.length === 2, "up ports are always loops");
+			if (ups.length === 2) {
+				var loopCard = makeLoopCard();
+				connectPorts(ups[0], loopCard.ports[0]);
+				connectPorts(ups[1], loopCard.ports[1]);
+				cards.push(loopCard);
+			}
+		}, this);
+	}
+	cs.forEach(function(cn){
+		var card = (bsi.bed === 'f' ? makeKnitFrontLoopCard() : makeKnitBackYarnCard());
+		//TODO: connect ports
+		cards.push(card);
+	}, this);
+
+	//put on proper layer:
+	cards.forEach(function(card){
+		card.stack = bsi.bed + bsi.index + '.';
+	});
+
+	//if there are some cards, push tile onto stack:
+	if (cards.length) {
+		var tile = new Tile();
+		tile.cards = cards;
+		stack.push(tile);
+	}
+
 /*
 	var bsi = parseNeedle(n);
 
@@ -403,6 +593,139 @@ RecordMachine.prototype.miss = function(d, n, cs) {
 RecordMachine.prototype.pause = function() {
 };
 
+
+//create an SVG from stacks:
+RecordMachine.prototype.drawStacks = function() {
+	var svgNS = 'http://www.w3.org/2000/svg';
+	var svg = document.createElementNS(svgNS, 'svg');
+	window.svg = svg; //DEBUG
+
+	//figure out which tiles are below other tiles:
+	var yOrder = [];
+	var tiles = [];
+	var mark = {};
+
+	function parseStackName(sn) {
+		var m = sn.match(/^([fb][s]?|c-\(.*\))([-+]?\d+)([-+.])$/);
+		console.assert(m !== null, "can't parse stack name [" + sn + "]");
+		return {
+			layer:m[1],
+			index:parseInt(m[2]),
+			shift:m[3]
+		};
+	}
+
+	for (var sn in this.stacks) {
+		var stack = this.stacks[sn];
+		stack.forEach(function(tile, i){
+			//tiles might be in more than one stack. Make sure to add to tiles array just once, though.
+			if (tile.mark !== mark) {
+				tiles.push(tile);
+				tile.mark = mark;
+			}
+			if (i > 0) {
+				yOrder.push({above:tile, below:stack[i-1]});
+			}
+		});
+	}
+
+	console.log("Have " + tiles.length + " tiles.");
+
+	//topological sort based on above/below order:
+	tiles.forEach(function(tile) {
+		tile.below = 0;
+		tile.above = [];
+		tile.y = 0.0; //eventually, will determine y-coordinate by being below everything
+	});
+
+	yOrder.forEach(function(ab){
+		ab.below.below += 1;
+		ab.above.above.push(ab.below);
+	});
+
+	var ready = [];
+	tiles.forEach(function(tile) {
+		if (tile.below === 0) {
+			ready.push(tile);
+			tile.y = 0.0;
+		}
+	});
+
+	var fullWidth = CARD_CENTER_WIDTH + 2.0 * CARD_SIDE_WIDTH + 3.0 * CARD_GAP;
+
+	for (var i = 0; i < ready.length; ++i) {
+		var tile = ready[i];
+		console.assert(tile.below === 0, "tile should be ready");
+		tile.above.forEach(function(a){
+			a.y = Math.min(a.y, tile.y - CARD_HEIGHT - CARD_GAP);
+			console.assert(a.below > 0, "tile should not be ready");
+			a.below -= 1;
+			if (a.below === 0) ready.push(a);
+		});
+	}
+
+	var cards = [];
+
+	tiles.forEach(function(tile) {
+		console.assert(tile.below === 0, "tile was done");
+		tile.cards.forEach(function(card){
+			var lis = parseStackName(card.stack);
+			card.w = (lis.shift === '.' ? CARD_CENTER_WIDTH : CARD_SIDE_WIDTH);
+			card.h = CARD_HEIGHT;
+			card.y = tile.y;
+			card.x = lis.index * fullWidth;
+			cards.push(card);
+		});
+	});
+
+
+	var min = {x:Infinity, y:-0.5};
+	var max = {x:-Infinity, y:0.5};
+
+	cards.forEach(function(card){
+		min.x = Math.min(min.x, card.x - 0.5 * card.w);
+		min.y = Math.min(min.y, card.y - 0.5 * card.h);
+		max.x = Math.max(max.x, card.x + 0.5 * card.w);
+		max.y = Math.max(max.y, card.y + 0.5 * card.h);
+	});
+
+	console.log("Have " + cards.length + " cards, in the [" + min.x + ", " + max.x + "]x[" + min.y + "," + max.y + "] range.");
+
+	var width = 1.0;
+	if (min.x < max.x) {
+		width = max.x - min.x + 1.0;
+	}
+	var height = 1.0;
+	if (min.y < max.y) {
+		height = max.y - min.y + 1.0;
+	}
+	svg.setAttribute("width", Math.ceil(width * 30) + "px");
+	svg.setAttribute("height", Math.ceil(height * 30) + "px");
+
+	svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+	svg.setAttribute("style", "background:#eee");
+
+	var path = document.createElementNS(svgNS, 'path');
+	path.setAttribute("style", "stroke-width:0.05;stroke:#000;fill:none;");
+	var d = "";
+	cards.forEach(function(card){
+		card.yarns.forEach(function(yarn){
+			yarn.points.forEach(function(p, i){
+				if (i === 0) {
+					d += "M";
+				}
+				var x = (card.w * (p.x - 0.5) + card.x) - min.x + 0.5;
+				var y = height - (card.h * (p.y - 0.5) + card.y - min.y) - 0.5;
+				d += " " + x.toFixed(2) + "," + y.toFixed(2);
+			});
+		});
+	});
+	path.setAttribute("d", d);
+	svg.appendChild(path);
+
+	return svg;
+};
+
 //replace the element 'toReplace' in the document with an interactive visualization of the knitout code in 'codeText':
 function replaceElement(toReplace, codeText) {
 	var container = document.createElement('div');
@@ -410,13 +733,18 @@ function replaceElement(toReplace, codeText) {
 
 	var code = document.createElement('code');
 	container.appendChild(code);
+
+
 	//TODO: nice syntax highlighting?
 	var machine = new RecordMachine();
 
 	parseKnitout(codeText, machine);
 
-	var machine = document.createElement('div');
-	container.appendChild(machine);
+	var picture = document.createElement('div');
+	picture.appendChild(machine.drawStacks());
+
+	container.appendChild(picture);
+
 
 	toReplace.replaceWith(container);
 }
