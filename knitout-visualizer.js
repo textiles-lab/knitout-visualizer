@@ -194,9 +194,8 @@ function parseKnitout(codeText, machine) {
 //RecordMachine is an abstract knitting machine that records the loop structure of a knitout document:
 
 const CARD_HEIGHT = 1.0; //height of cards
+const CARD_WIDTH = 2.2; //width of cards
 const CARD_GAP = 0.1; //minimum x/y space between cards
-const CARD_SIDE_WIDTH = 1.0;
-const CARD_CENTER_WIDTH = 2.2;
 
 
 //Idea: the machine keeps track of a stack of "tiles" below each needle.
@@ -220,13 +219,24 @@ const PORT_LEFT  = 'l';
 const PORT_RIGHT = 'r';
 const PORT_UP    = 'u';
 const PORT_DOWN  = 'd';
-const PORT_IN    = 'i';
-const PORT_OUT   = 'o';
+const PORT_MID   = 'm';
 
 function Card() {
-	this.stackName = ''; //which stack is this card actually in? (Tiles can span multiple stacks.)
+	this.stack = ''; //which stack is this card actually in? (Tiles can span multiple stacks.)
 	this.yarns = []; //for drawing; have start:port, end:port;
 	this.ports = []; //note: in left-to-right order for loop ports
+}
+
+Card.prototype.linkPorts = function() {
+	this.yarns.forEach(function(yarn){
+		yarn.start.card = this;
+		yarn.start.yarn = yarn;
+		yarn.end.card = this;
+		yarn.end.yarn = yarn;
+	}, this);
+	this.ports.forEach(function(port){
+		console.assert(port.card === this, "properly linked ports");
+	}, this);
 }
 
 function Port(type) {
@@ -238,21 +248,29 @@ function Port(type) {
 
 function connectPorts(portA, portB) {
 	con = portA.type + portB.type;
-	console.assert(con === "lr" || con == "rl" || con == "ud" || con == "du" || con == "io" || con == "oi");
+	//TODO: add more graceful yarn turns to avoid ll / rr connections.
+	console.assert(con === "lr" || con == "rl" || con == "ll" || con == "rr" || con == "ud" || con == "du" || con == "mm", "valid connection type");
 	//actual connection: TODO
+
+	portA.other = portB;
+	portB.other = portA;
 }
 
 //various types of cards:
-function makeKnitFrontYarnCard() {
+function makeKnitYarnCard() {
 	//
 	//  l---o  o---r
 	//
 	//the yarns part of a knit-front.
 	var card = new Card();
 	card.ports.push(new Port(PORT_LEFT));
-	card.ports.push(new Port(PORT_OUT));
-	card.ports.push(new Port(PORT_OUT));
+	card.ports.push(new Port(PORT_MID));
+	card.ports.push(new Port(PORT_MID));
 	card.ports.push(new Port(PORT_RIGHT));
+
+	card.left = card.ports[0];
+	card.right = card.ports[3];
+	card.mids = [card.ports[1], card.ports[2]];
 
 	card.yarns.push({
 		start:card.ports[0],
@@ -266,20 +284,25 @@ function makeKnitFrontYarnCard() {
 		end:card.ports[3]
 	});
 
+	card.linkPorts();
+
 	return card;
 }
 
-function makeKnitFrontLoopCard() {
+function makeKnitLoopCard() {
     //      u  u
 	//      |  |
 	//      i  i
 	//
 	//the loop part of a knit-front, comes from behind, leaves up
 	var card = new Card();
-	card.ports.push(new Port(PORT_IN));
+	card.ports.push(new Port(PORT_MID));
 	card.ports.push(new Port(PORT_UP));
 	card.ports.push(new Port(PORT_UP));
-	card.ports.push(new Port(PORT_IN));
+	card.ports.push(new Port(PORT_MID));
+
+	card.mids = [card.ports[0], card.ports[3]];
+	card.ups = [card.ports[1], card.ports[2]];
 
 	card.yarns.push({
 		start:card.ports[0],
@@ -292,6 +315,8 @@ function makeKnitFrontLoopCard() {
 		points:[{x:2.0/3.0, y:1.0}, {x:2.0/3.0-0.1, y:0.5-0.1}],
 		end:card.ports[3]
 	});
+
+	card.linkPorts();
 
 	return card;
 }
@@ -307,14 +332,111 @@ function makeLoopCard() {
 	card.ports.push(new Port(PORT_DOWN));
 	card.ports.push(new Port(PORT_DOWN));
 
+	card.downs = [card.ports[0], card.ports[1]];
+
 	card.yarns.push({
 		start:card.ports[0],
 		points:[{x:1.0/3.0, y:0.0}, {x:1.0/3.0, y:0.5}, {x:2.0/3.0, y:0.5}, {x:2.0/3.0, y:0.0}],
 		end:card.ports[1]
 	});
 
+	card.linkPorts();
+
 	return card;
 }
+
+function makeYarnCard() {
+	//
+	// l--------r
+	//
+	//simple yarn card from left to right:
+
+	var card = new Card();
+	card.ports.push(new Port(PORT_LEFT));
+	card.ports.push(new Port(PORT_RIGHT));
+
+	card.left = card.ports[0];
+	card.right = card.ports[1];
+
+	card.yarns.push({
+		start:card.ports[0],
+		points:[{x:0.0, y:0.5}, {x:1.0, y:0.5}],
+		end:card.ports[1]
+	});
+
+	card.linkPorts();
+
+	return card;
+}
+
+/*
+function makeYarnCard(p1, p2) {
+	//simple yarn card from p1 to p2:
+
+	var card = new Card();
+	card.ports.push(new Port(p1));
+	card.ports.push(new Port(p2));
+
+	function portCoord(p) {
+		if      (p === PORT_LEFT) return {x:0.0, y:0.5};
+		else if (p === PORT_RIGHT) return {x:1.0, y:0.5};
+		else if (p === PORT_UP) return {x:0.5, y:1.0};
+		else if (p === PORT_DOWN) return {x:0.5, y:0.0};
+		else if (p === PORT_IN || p === PORT_OUT) return {x:0.5, y:0.5};
+		else console.assert(false, "Port type [" + p + "] not recognized.");
+	}
+
+	var c1 = portCoord(p1);
+	var c2 = portCoord(p2);
+
+	var points = [];
+	points.push(c1);
+	if (c1.x !== c2.x && c1.y !== c2.y) points.push({x:0.5, y:0.5});
+	points.push(c2);
+
+	card.yarns.push({
+		start:card.ports[0],
+		points:points,
+		end:card.ports[1]
+	});
+
+	card.linkPorts();
+
+	return card;
+}
+*/
+
+function makeLoopPassCard() {
+	//  u   u
+	//  |   |
+	//  d   d
+	// a yarn from left-to-right (or right-to-left)
+	var card = new Card();
+	card.ports.push(new Port(PORT_DOWN));
+	card.ports.push(new Port(PORT_UP));
+	card.ports.push(new Port(PORT_UP));
+	card.ports.push(new Port(PORT_DOWN));
+
+	card.ups = [card.ports[1], card.ports[2]];
+	card.downs = [card.ports[0], card.ports[3]];
+
+	card.yarns.push({
+		start:card.ports[0],
+		points:[{x:1.0/3.0, y:0.0}, {x:1.0/3.0, y:1.0}],
+		end:card.ports[1]
+	});
+
+	card.yarns.push({
+		start:card.ports[2],
+		points:[{x:2.0/3.0, y:0.0}, {x:2.0/3.0, y:1.0}],
+		end:card.ports[3]
+	});
+
+	card.linkPorts();
+
+	return card;
+}
+
 
 //loop edges between cards are always clear from stack order
 //yarn edges between cards are always to adjacent stacks(?) and might also be clear(??)
@@ -322,33 +444,33 @@ function makeLoopCard() {
 function RecordMachine() {
 	//name -> carriers map starts empty:
 	this.carriers = {};
-	//bed starts empty:
+	//bed starts empty: (but will be filled with [implied?] loop tiles)
 	this.needles = {};
+	this.needlesY = 0.0; //bed will be pushed upward as new tiles are inserted
+
 	//beds start aligned:
 	this.racking = 0.0;
 	//stitch values start zeroed:
 	this.stitchValues = [0.0, 0.0];
-
-	//knit object state tracked by tile stacks, which are referenced by layer + integer:
-	this.stacks = {};
 }
 
-//there are stacks -/./+ of every needle on every layer:
-RecordMachine.prototype.getStack = function(layer, index, side) {
-	var key = layer + index + side;
-	if (!(key in this.stacks)) {
-		this.stacks[key] = [];
+RecordMachine.prototype.getNeedle = function(n) {
+	if (!(n in this.needles)) {
+		this.needles[n] = {
+			stack:[]
+		};
 	}
-	return this.stacks[key];
-}
+	return this.needles[n];
+};
 
 //set the carriers in front-to-back order; carriers start out of action at the right:
 RecordMachine.prototype.setCarriers = function(cs) {
 	this.carriers = {};
-	cs.forEach(function(n){
+	cs.forEach(function(n, i){
 		this.carriers[n] = {
+			depth:i,
 			at:-Infinity
-			// last: <-- if has knit
+			// last: <-- if has knit, last card
 			// mark: <-- if marked to come in at next use
 		};
 	}, this);
@@ -452,8 +574,8 @@ RecordMachine.prototype.bringInIfNeeded = function(d, n, cs) {
 			at:at,
 			cs:cs.slice()
 		};
-		cs.forEach(function(n){
-			this.carriers[n].hook = hook;
+		cs.forEach(function(cn){
+			this.carriers[cn].hook = hook;
 		}, this);
 	}
 }
@@ -514,27 +636,29 @@ RecordMachine.prototype.knit = function(d, n, cs) {
 	//bring in carriers if needed:
 	this.bringInIfNeeded(d, n, cs);
 
-	//TODO: kick other carriers
-	//TODO: move carriers (might make yarn overlaps?)
+	//TODO: move carriers into position (+ make yarn overlaps)
+
+
+	//add a new tile to stack of tiles below the needle:
+	var needle = this.getNeedle(n);
+
+	var cards = []; //new card stack, back-to-front
 
 	cs.forEach(function(cn){
 		var c = this.carriers[cn];
-		c.last = n + d; //TODO: should probably be a reference to a tile, card, or port.
-	}, this);
-
-	//build card stack for knit:
-	var cards = []; //back-to-front
-
-	cs.forEach(function(cn){
-		var card = (bsi.bed === 'f' ? makeKnitFrontYarnCard() : makeKnitBackLoopCard());
-		//TODO: connect ports
+		var card;
+		if (bsi.bed === 'f') {
+			card = makeKnitYarnCard();
+			if (c.last) connectPorts(c.last, (d === '+' ? card.left : card.right));
+			c.last = (d === '+' ? card.right : card.left);
+		} else { //bsi.bed === 'b'
+			card = makeKnitLoopCard();
+		}
 		cards.push(card);
 	}, this);
 
-	//core of stack is loops from previous 
-	var stack = this.getStack(bsi.bed, bsi.index, '.');
-	if (stack.length) {
-		stack[stack.length-1].cards.forEach(function(card){
+	if (needle.stack.length) {
+		needle.stack[needle.stack.length-1].cards.forEach(function(card){
 			var ups = [];
 			card.ports.forEach(function(port){
 				if (port.type === PORT_UP) {
@@ -550,39 +674,29 @@ RecordMachine.prototype.knit = function(d, n, cs) {
 			}
 		}, this);
 	}
-	cs.forEach(function(cn){
-		var card = (bsi.bed === 'f' ? makeKnitFrontLoopCard() : makeKnitBackYarnCard());
-		//TODO: connect ports
+
+	cs.forEach(function(cn, i){
+		var c = this.carriers[cn];
+		var card;
+		if (bsi.bed === 'f') {
+			card = makeKnitLoopCard();
+		} else {
+			card = makeKnitYarnCard();
+			if (c.last) connectPorts(c.last, (d === '+' ? card.left : card.right));
+			c.last = (d === '+' ? card.right : card.left);
+		}
+		connectPorts(cards[i].mids[0], card.mids[0]);
+		connectPorts(cards[i].mids[1], card.mids[1]);
 		cards.push(card);
 	}, this);
 
-	//put on proper layer:
-	cards.forEach(function(card){
-		card.stack = bsi.bed + bsi.index + '.';
-	});
 
 	//if there are some cards, push tile onto stack:
 	if (cards.length) {
 		var tile = new Tile();
 		tile.cards = cards;
-		stack.push(tile);
+		needle.stack.push(tile);
 	}
-
-/*
-	var bsi = parseNeedle(n);
-
-	//record stitch:
-	var stitch = {
-		type:'k',
-		created:needle, //or figuring out the direction it is through 'through'
-		loopsIn:null, //what loops is it through? (needle order)
-	};
-	if (n in this.needles) {
-		stitch.through = this.needles[n];
-	}
-	this.needles[n] = stitch;
-	*/
-
 };
 RecordMachine.prototype.tuck = function(d, n, cs) {
 };
@@ -603,30 +717,25 @@ RecordMachine.prototype.drawStacks = function() {
 	//figure out which tiles are below other tiles:
 	var yOrder = [];
 	var tiles = [];
-	var mark = {};
 
-	function parseStackName(sn) {
-		var m = sn.match(/^([fb][s]?|c-\(.*\))([-+]?\d+)([-+.])$/);
-		console.assert(m !== null, "can't parse stack name [" + sn + "]");
-		return {
-			layer:m[1],
-			index:parseInt(m[2]),
-			shift:m[3]
-		};
-	}
+	var fullWidth = CARD_WIDTH + CARD_GAP;
 
-	for (var sn in this.stacks) {
-		var stack = this.stacks[sn];
+	//compute x coordinates for all tiles, and read back y-coordinate constraints induced by stacks:
+	for (var n in this.needles) {
+		var bsi = parseNeedle(n);
+		var stack = this.needles[n].stack;
 		stack.forEach(function(tile, i){
-			//tiles might be in more than one stack. Make sure to add to tiles array just once, though.
-			if (tile.mark !== mark) {
-				tiles.push(tile);
-				tile.mark = mark;
+			tile.x = fullWidth * bsi.index;
+			if (bsi.bed === 'b') {
+				tile.x -= this.racking * fullWidth;
 			}
+
+			tiles.push(tile);
+
 			if (i > 0) {
 				yOrder.push({above:tile, below:stack[i-1]});
 			}
-		});
+		}, this);
 	}
 
 	console.log("Have " + tiles.length + " tiles.");
@@ -651,7 +760,6 @@ RecordMachine.prototype.drawStacks = function() {
 		}
 	});
 
-	var fullWidth = CARD_CENTER_WIDTH + 2.0 * CARD_SIDE_WIDTH + 3.0 * CARD_GAP;
 
 	for (var i = 0; i < ready.length; ++i) {
 		var tile = ready[i];
@@ -664,16 +772,17 @@ RecordMachine.prototype.drawStacks = function() {
 		});
 	}
 
+
+	//read out cards from tiles:
 	var cards = [];
 
 	tiles.forEach(function(tile) {
 		console.assert(tile.below === 0, "tile was done");
 		tile.cards.forEach(function(card){
-			var lis = parseStackName(card.stack);
-			card.w = (lis.shift === '.' ? CARD_CENTER_WIDTH : CARD_SIDE_WIDTH);
+			card.w = CARD_WIDTH;
 			card.h = CARD_HEIGHT;
 			card.y = tile.y;
-			card.x = lis.index * fullWidth;
+			card.x = tile.x;
 			cards.push(card);
 		});
 	});
@@ -699,28 +808,53 @@ RecordMachine.prototype.drawStacks = function() {
 	if (min.y < max.y) {
 		height = max.y - min.y + 1.0;
 	}
-	svg.setAttribute("width", Math.ceil(width * 30) + "px");
-	svg.setAttribute("height", Math.ceil(height * 30) + "px");
+	svg.setAttribute("width", Math.ceil(width * 20) + "px");
+	svg.setAttribute("height", Math.ceil(height * 20) + "px");
 
 	svg.setAttribute("viewBox", "0 0 " + width + " " + height);
 	svg.setAttribute("style", "background:#eee");
 
-	var path = document.createElementNS(svgNS, 'path');
-	path.setAttribute("style", "stroke-width:0.05;stroke:#000;fill:none;");
-	var d = "";
+	var dCard = "";
+	var dPort = "";
 	cards.forEach(function(card){
 		card.yarns.forEach(function(yarn){
 			yarn.points.forEach(function(p, i){
 				if (i === 0) {
-					d += "M";
+					dCard += "M";
 				}
-				var x = (card.w * (p.x - 0.5) + card.x) - min.x + 0.5;
-				var y = height - (card.h * (p.y - 0.5) + card.y - min.y) - 0.5;
-				d += " " + x.toFixed(2) + "," + y.toFixed(2);
+				var x = card.w * (p.x - 0.5) + card.x - min.x + 0.5;
+				var y = height - (card.h * (p.y - 0.5) + card.y - min.y + 0.5);
+				dCard += " " + x.toFixed(2) + "," + y.toFixed(2);
 			});
 		});
+		function portPoint(port) {
+			var p;
+			if (port === port.yarn.start) {
+				p = port.yarn.points[0];
+			} else { console.assert(port === port.yarn.end, "port should start or end its yarn");
+				p = port.yarn.points[port.yarn.points.length-1];
+			}
+			return {
+				x: port.card.w * (p.x - 0.5) + port.card.x - min.x + 0.5,
+				y: height - (port.card.h * (p.y - 0.5) + port.card.y - min.y + 0.5)
+			};
+		}
+		card.ports.forEach(function(port){
+			if (port.other) {
+				var from = portPoint(port);
+				var to = portPoint(port.other);
+				dPort += "M" + from.x.toFixed(2) + "," + from.y.toFixed(2);
+				dPort += " " + to.x.toFixed(2) + "," + to.y.toFixed(2);
+			}
+		});
 	});
-	path.setAttribute("d", d);
+	var path = document.createElementNS(svgNS, 'path');
+	path.setAttribute("style", "stroke-width:0.05;stroke:#000;fill:none;");
+	path.setAttribute("d", dCard);
+	svg.appendChild(path);
+	var path = document.createElementNS(svgNS, 'path');
+	path.setAttribute("style", "stroke-width:0.05;stroke:#f00;fill:none;");
+	path.setAttribute("d", dPort);
 	svg.appendChild(path);
 
 	return svg;
