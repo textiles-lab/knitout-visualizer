@@ -9,8 +9,10 @@ function parseKnitout(codeText, machine) {
 	var carrierNames = [];
 
 	var inCommentHeader = true;
+	var end = false;
 	
 	codeText.split("\n").forEach(function(line, lineNumber) {
+		if (end) return;
 		function addError(info) {
 			console.log("Parse Error on line " + lineNumber + ": " + info);
 			errors.push({lineNumber:lineNumber, text:info});
@@ -172,6 +174,8 @@ function parseKnitout(codeText, machine) {
 			} else if (op === "pause") {
 				if (tokens.length !== 0) throw "pause takes no arguments";
 				machine.pause();
+			} else if (op === "x-end") {
+				end = true;
 			} else {
 				if (op.startsWith("x-")) {
 					addWarning("Unrecognized extension operation '" + op + "'.");
@@ -184,7 +188,8 @@ function parseKnitout(codeText, machine) {
 				addError(e);
 			} else {
 				addError("[error that wasn't a string]");
-				console.log(e); //DEBUG
+				throw e;
+				//console.log(e); //DEBUG
 			}
 		}
 
@@ -193,260 +198,183 @@ function parseKnitout(codeText, machine) {
 
 //RecordMachine is an abstract knitting machine that records the loop structure of a knitout document:
 
-const CARD_HEIGHT = 1.0; //height of cards
-const CARD_WIDTH = 2.2; //width of cards
-const CARD_GAP = 0.1; //minimum x/y space between cards
+//Idea:
+// track shapes using yarns between anchors.
+// templates are used to place anchors.
+// TODO: we are careful to track the front-to-back order of yarns between anchors
 
+//Depths (viewed from above):
 
-//Idea: the machine keeps track of a stack of "tiles" below each needle.
-// Tiles are a stack of loop operation cards.
-// Tiles may participate in more than one layer.
-// Visualization is managed so that the volume of a tile is never overlapped by the volume of another tile.
-// "Cards" in a tile have ten types of edges, though for a give tile type (side/needle) there are only six:
-// left/right yarn connections
-// in/out loop connections (needle tiles only)
-// in/out yarn connections (side tiles only)
-// up/down loop connections (needle tiles only)
-// up/down yarn connections (side tiles only)
+//    (back bed)
+// -2 -------
+//    (back sliders)
+// -1 -------
+//       (empty area)
+//  0 -------
+//    (carriers)
+//  1 -------
+//    (front sliders)
+//  2 -------
+//    (front bed)
 
-function Tile() {
-	this.cards = []; //back-to-front
-	//TODO: y-ordering constraints? this.constraints = []; // {other:Tile, over:bool}
-}
-
-//helpful directional tags for ports:
-const PORT_LEFT  = 'l';
-const PORT_RIGHT = 'r';
-const PORT_UP    = 'u';
-const PORT_DOWN  = 'd';
-const PORT_MID   = 'm';
-
-function Card() {
-	this.stack = ''; //which stack is this card actually in? (Tiles can span multiple stacks.)
-	this.yarns = []; //for drawing; have start:port, end:port;
-	this.ports = []; //note: in left-to-right order for loop ports
-}
-
-Card.prototype.linkPorts = function() {
-	this.yarns.forEach(function(yarn){
-		yarn.start.card = this;
-		yarn.start.yarn = yarn;
-		yarn.end.card = this;
-		yarn.end.yarn = yarn;
-	}, this);
-	this.ports.forEach(function(port){
-		console.assert(port.card === this, "properly linked ports");
-	}, this);
-}
-
-function Port(type) {
-	this.type = type;
-	//this.card = card; //owner card, eventually?
-	//this.yarn = ; //eventually, set also the yarn in the owner card?
-	this.other = null; //connected port
-}
-
-function connectPorts(portA, portB) {
-	con = portA.type + portB.type;
-	//TODO: add more graceful yarn turns to avoid ll / rr connections.
-	console.assert(con === "lr" || con == "rl" || con == "ll" || con == "rr" || con == "ud" || con == "du" || con == "mm", "valid connection type");
-	//actual connection: TODO
-
-	portA.other = portB;
-	portB.other = portA;
-}
-
-//various types of cards:
-function makeKnitYarnCard() {
-	//
-	//  l---o  o---r
-	//
-	//the yarns part of a knit-front.
-	var card = new Card();
-	card.ports.push(new Port(PORT_LEFT));
-	card.ports.push(new Port(PORT_MID));
-	card.ports.push(new Port(PORT_MID));
-	card.ports.push(new Port(PORT_RIGHT));
-
-	card.left = card.ports[0];
-	card.right = card.ports[3];
-	card.mids = [card.ports[1], card.ports[2]];
-
-	card.yarns.push({
-		start:card.ports[0],
-		points:[{x:0.0, y:0.5}, {x:1.0/3.0+0.1, y:0.5-0.1}],
-		end:card.ports[1]
+function Guide(bed, points) {
+	console.assert(bed, "must pass real bed");
+	console.assert(points, "must pass list of points");
+	points = points.slice(); //copy array
+	points.forEach(function(p){
+		console.assert('x' in p && 'y' in p && 'z' in p, "points must have x,y,z");
+		console.assert(!isNaN(p.x) && !isNaN(p.y) && !isNaN(p.z), "points must have x,y,z");
 	});
+	this.bed = bed; //anchors are relative to a 'bed', which can translate them.
+	this.points = points;
 
-	card.yarns.push({
-		start:card.ports[2],
-		points:[{x:2.0/3.0-0.1, y:0.5-0.1}, {x:1.0, y:0.5}],
-		end:card.ports[3]
-	});
-
-	card.linkPorts();
-
-	return card;
+	this.segments = []; //back-to-front ordered stack of yarns through this anchor.
 }
 
-function makeKnitLoopCard() {
-    //      u  u
-	//      |  |
-	//      i  i
-	//
-	//the loop part of a knit-front, comes from behind, leaves up
-	var card = new Card();
-	card.ports.push(new Port(PORT_MID));
-	card.ports.push(new Port(PORT_UP));
-	card.ports.push(new Port(PORT_UP));
-	card.ports.push(new Port(PORT_MID));
+//Yarns are made of a series of segments that go through guides (each guide may have several points):
+function Segment(guide, direction) {
+	this.guide = guide;
+	this.direction = direction; //does the yarn pass through the guide points in 0...N (+) or N...0 (-) order?
 
-	card.mids = [card.ports[0], card.ports[3]];
-	card.ups = [card.ports[1], card.ports[2]];
-
-	card.yarns.push({
-		start:card.ports[0],
-		points:[{x:1.0/3.0+0.1, y:0.5-0.1}, {x:1.0/3.0, y:1.0}],
-		end:card.ports[1]
-	});
-
-	card.yarns.push({
-		start:card.ports[2],
-		points:[{x:2.0/3.0, y:1.0}, {x:2.0/3.0-0.1, y:0.5-0.1}],
-		end:card.ports[3]
-	});
-
-	card.linkPorts();
-
-	return card;
+	//yarns are maintained as doubly linked lists:
+	this.yarn = null;
+	this.next = null;
+	this.prev = null;
 }
 
-
-function makeLoopCard() {
-	//
-    //      .--.
-	//      |  |
-	//      d  d
-	//a loop of yarn, comes from down.
-	var card = new Card();
-	card.ports.push(new Port(PORT_DOWN));
-	card.ports.push(new Port(PORT_DOWN));
-
-	card.downs = [card.ports[0], card.ports[1]];
-
-	card.yarns.push({
-		start:card.ports[0],
-		points:[{x:1.0/3.0, y:0.0}, {x:1.0/3.0, y:0.5}, {x:2.0/3.0, y:0.5}, {x:2.0/3.0, y:0.0}],
-		end:card.ports[1]
-	});
-
-	card.linkPorts();
-
-	return card;
+function Yarn() {
+	//head and tail of doubly-linked Segment list:
+	this.head = null;
+	this.tail = null;
 }
 
-function makeYarnCard() {
-	//
-	// l--------r
-	//
-	//simple yarn card from left to right:
+Yarn.prototype.eraseSegment = function(segment) {
+	if (segment === this.head) this.head = this.head.next;
+	if (segment === this.tail) this.tail = this.tail.prev;
 
-	var card = new Card();
-	card.ports.push(new Port(PORT_LEFT));
-	card.ports.push(new Port(PORT_RIGHT));
+	if (segment.next) segment.next.prev = segment.prev;
+	if (segment.prev) segment.prev.next = segment.next;
 
-	card.left = card.ports[0];
-	card.right = card.ports[1];
+	segment.yarn = null;
+	segment.next = segment.prev = null;
 
-	card.yarns.push({
-		start:card.ports[0],
-		points:[{x:0.0, y:0.5}, {x:1.0, y:0.5}],
-		end:card.ports[1]
-	});
+	var i = segment.guide.segments.indexOf(segment);
+	console.assert(i !== -1, "segment should appear in guide, right?");
+	segment.guide.splice(i, 1);
+};
 
-	card.linkPorts();
+Yarn.prototype.insertGuide = function(before, guide, direction) {
+	var segment = new Segment(guide, direction);
+	segment.yarn = this;
 
-	return card;
-}
-
-/*
-function makeYarnCard(p1, p2) {
-	//simple yarn card from p1 to p2:
-
-	var card = new Card();
-	card.ports.push(new Port(p1));
-	card.ports.push(new Port(p2));
-
-	function portCoord(p) {
-		if      (p === PORT_LEFT) return {x:0.0, y:0.5};
-		else if (p === PORT_RIGHT) return {x:1.0, y:0.5};
-		else if (p === PORT_UP) return {x:0.5, y:1.0};
-		else if (p === PORT_DOWN) return {x:0.5, y:0.0};
-		else if (p === PORT_IN || p === PORT_OUT) return {x:0.5, y:0.5};
-		else console.assert(false, "Port type [" + p + "] not recognized.");
+	if (this.head === null || this.tail === null) {
+		console.assert(this.head === null && this.tail === null, "empty -> both start and end are empty");
+		console.assert(before === null, "can't insert before anything if yarn is empty");
+		this.head = this.tail = segment;
+		return;
 	}
 
-	var c1 = portCoord(p1);
-	var c2 = portCoord(p2);
+	segment.next = before;
+	segment.prev = (before === null ? this.end : before.prev);
 
-	var points = [];
-	points.push(c1);
-	if (c1.x !== c2.x && c1.y !== c2.y) points.push({x:0.5, y:0.5});
-	points.push(c2);
+	if (segment.next !== null) segment.next.prev = segment;
+	if (segment.prev !== null) segment.prev.next = segment;
 
-	card.yarns.push({
-		start:card.ports[0],
-		points:points,
-		end:card.ports[1]
-	});
+	if (this.head.prev !== null) this.head = this.head.prev;
+	if (this.tail.next !== null) this.tail = this.tail.next;
 
-	card.linkPorts();
+	console.assert(this.head.prev === null && this.tail.next === null, "head/tail properly updated");
 
-	return card;
+	guide.segments.push(segment);
+};
+
+//"Cards" are templates used to shape yarn into specific stitches.
+function Card() {
+	//cards will have a list of guides, and generally convenience properties for specific guides as well.
+	this.guides = [];
 }
-*/
 
-function makeLoopPassCard() {
-	//  u   u
-	//  |   |
-	//  d   d
-	// a yarn from left-to-right (or right-to-left)
+//"Beds" hold (and translate) anchors
+// slight misnomer, in that there are maybe separate "beds" for needles and for the cards below needles, ... and maybe even for carriers?
+function Bed(x,y,z) {
+	this.x = x;
+	this.y = y;
+	this.z = z;
+	this.cards = [];
+}
+
+//TODO: functions to flip cards over z axis?
+
+var NEEDLE_SPACING = 1.0;
+var LOOP_WIDTH = 0.5;
+var LOOP_HEIGHT = 0.8;
+
+function makeNeedleCard(bed, index) {
 	var card = new Card();
-	card.ports.push(new Port(PORT_DOWN));
-	card.ports.push(new Port(PORT_UP));
-	card.ports.push(new Port(PORT_UP));
-	card.ports.push(new Port(PORT_DOWN));
-
-	card.ups = [card.ports[1], card.ports[2]];
-	card.downs = [card.ports[0], card.ports[3]];
-
-	card.yarns.push({
-		start:card.ports[0],
-		points:[{x:1.0/3.0, y:0.0}, {x:1.0/3.0, y:1.0}],
-		end:card.ports[1]
-	});
-
-	card.yarns.push({
-		start:card.ports[2],
-		points:[{x:2.0/3.0, y:0.0}, {x:2.0/3.0, y:1.0}],
-		end:card.ports[3]
-	});
-
-	card.linkPorts();
+	var x = NEEDLE_SPACING * index;
+	card.loop = new Guide(bed, [
+		{x:x - 0.5 * LOOP_WIDTH, y:-0.5 * LOOP_HEIGHT, z: 0.0},
+		{x:x - 0.5 * LOOP_WIDTH, y: 0.5 * LOOP_HEIGHT, z: 0.0},
+		{x:x + 0.5 * LOOP_WIDTH, y: 0.5 * LOOP_HEIGHT, z: 0.0},
+		{x:x + 0.5 * LOOP_WIDTH, y:-0.5 * LOOP_HEIGHT, z: 0.0}
+	]);
+	card.guides.push(card.loop);
 
 	return card;
 }
 
+function makeKnitCard(bed, index, y, pullZ) {
+	var card = new Card();
+	var x = NEEDLE_SPACING * index;
+	var d = 0.1;
+	card.loop = new Guide(bed, [
+		{x:x - 0.5 * LOOP_WIDTH,     y:y - 0.5 * LOOP_HEIGHT, z:0.0},
+		{x:x - 0.5 * LOOP_WIDTH - d, y:y + d, z: 0.0},
+		{x:x + 0.5 * LOOP_WIDTH + d, y:y + d, z: 0.0},
+		{x:x + 0.5 * LOOP_WIDTH,     y:y - 0.5 * LOOP_HEIGHT, z:0.0}
+	]);
+	card.leftYarn = new Guide(bed, [
+		{x:x - 0.5 * NEEDLE_SPACING, y:y, z:0.0},
+		{x:x - 0.5 * LOOP_WIDTH + d, y:y - d, z:0.0},
+		{x:x - 0.5 * LOOP_WIDTH, y:y + 0.5 * LOOP_HEIGHT, z: 0.0}
+	]);
+	card.rightYarn = new Guide(bed, [
+		{x:x + 0.5 * LOOP_WIDTH, y:y + 0.5 * LOOP_HEIGHT, z: 0.0},
+		{x:x + 0.5 * LOOP_WIDTH - d, y:y - d, z:0.0},
+		{x:x + 0.5 * NEEDLE_SPACING, y:y, z:0.0}
+	]);
+
+	card.guides.push(card.loop, card.leftYarn, card.rightYarn);
+
+	return card;
+}
 
 //loop edges between cards are always clear from stack order
 //yarn edges between cards are always to adjacent stacks(?) and might also be clear(??)
 
 function RecordMachine() {
+	this.beds = {
+		b:new Bed(0.0, 0.0, -2.0),
+		bs:new Bed(0.0, 0.0, -1.0),
+		fs:new Bed(0.0, 0.0, 1.0),
+		f:new Bed(0.0, 0.0, 2.0)
+	};
+	this.needleBeds = {
+		b:new Bed(0.0, 0.0, -2.0),
+		bs:new Bed(0.0, 0.0, -1.0),
+		fs:new Bed(0.0, 0.0, 1.0),
+		f:new Bed(0.0, 0.0, 2.0)
+	};
+	this.carrierBed = new Bed(0.0, 0.0, 0.0);
+
 	//name -> carriers map starts empty:
 	this.carriers = {};
-	//bed starts empty: (but will be filled with [implied?] loop tiles)
+	//bed starts empty: (but will be filled with needle cards)
 	this.needles = {};
-	this.needlesY = 0.0; //bed will be pushed upward as new tiles are inserted
+	this.needlesY = 0.0;
+
+	//all yarns, including inactive ones:
+	this.yarns = [];
 
 	//beds start aligned:
 	this.racking = 0.0;
@@ -456,9 +384,11 @@ function RecordMachine() {
 
 RecordMachine.prototype.getNeedle = function(n) {
 	if (!(n in this.needles)) {
-		this.needles[n] = {
-			stack:[]
-		};
+		var bsi = parseNeedle(n);
+		var bed = this.needleBeds[bsi.bed + (bsi.slider ? 's' : '')];
+		var needle = makeNeedleCard(bed, bsi.index);
+		needle.horizonY = 0.0; //top of the topmost thing below this needle, used to push beds upwards
+		this.needles[n] = needle;
 	}
 	return this.needles[n];
 };
@@ -468,10 +398,9 @@ RecordMachine.prototype.setCarriers = function(cs) {
 	this.carriers = {};
 	cs.forEach(function(n, i){
 		this.carriers[n] = {
-			depth:i,
-			at:-Infinity
-			// last: <-- if has knit, last card
-			// mark: <-- if marked to come in at next use
+			guide:new Guide(this.carrierBed, [{x:Infinity, y:1.0, z:(i + 0.5) / cs.length}])
+			// yarn: <-- if in.
+			// mark: <-- if marked to come in.
 		};
 	}, this);
 };
@@ -487,43 +416,12 @@ function parseNeedle(n) {
 	};
 }
 
-//helper to compute locs (front-bed-relative world positions) based on [direction +] needle :
-RecordMachine.prototype.atLoc = function(n) {
-	var m = n.match(/^([fb])(s?)([-+]?\d+)$/);
-	console.assert(m !== null, "needle should always be parseable");
-	var loc = parseInt(m[3]);
-	if (m[1] === "b") {
-		loc -= this.racking;
-	}
-	return loc;
-};
-RecordMachine.prototype.beforeLoc = function(d, n) {
-	var loc = this.atLoc(n);
-	if (d === '+') {
-		loc -= 1.0 / 16.0;
-	} else { console.assert(d === '-', "directions should only be +/-");
-		loc += 1.0 / 16.0;
-	}
-	return ;
-};
-RecordMachine.prototype.afterLoc = function(d, n) {
-	var loc = this.atLoc(n);
-	if (d === '+') {
-		loc += 1.0 / 16.0;
-	} else { console.assert(d === '-', "directions should only be +/-");
-		loc -= 1.0 / 16.0;
-	}
-	return ;
-};
-
-
 RecordMachine.prototype.markIn = function(cs, hook) {
 	//check parameters:
 	cs.forEach(function(cn){
 		if (!(cn in this.carriers)) throw "Carrier name [" + cn + "] not in carrier list.";
 		var c = this.carriers[cn];
-		if (c.last) throw "Carrier [" + cn + "] is already in action.";
-		if (c.hook) throw "Carrier [" + cn + "] is already in a holding hook.";
+		if (c.yarn) throw "Carrier [" + cn + "] is already in action.";
 		if (c.mark) throw "Carrier [" + cn + "] is already marked to come in.";
 	}, this);
 	//mark carriers:
@@ -542,7 +440,7 @@ RecordMachine.prototype.bringInIfNeeded = function(d, n, cs) {
 	cs.forEach(function(cn){
 		if (!(cn in this.carriers)) throw "Carrier name [" + cn + "] not in carrier list.";
 		var c = this.carriers[cn];
-		if (!c.last) needIn = true;
+		if (!c.yarn) needIn = true;
 	}, this);
 	if (!needIn) return;
 
@@ -559,13 +457,20 @@ RecordMachine.prototype.bringInIfNeeded = function(d, n, cs) {
 
 	//'at' is where the hook parks (and where the carriers begin):
 	// (that is, just before 'n' in direction 'd')
-	var at = this.beforeLoc(d, n);
+	var bsi = parseNeedle(n);
+	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? -0.5 : 0.5) + (bsi.bed === 'b' ? -this.racking : 0.0) );
 
-	//move carriers, remove mark:
+	//move carriers, create yarn, remove mark:
 	cs.forEach(function(cn){
 		var c = this.carriers[cn];
-		c.at = at;
+		c.guide.points.forEach(function(p){ p.x = at; });
+
 		delete c.mark;
+
+		var yarn = new Yarn();
+		yarn.insertGuide(null, c.guide, '+');
+		c.yarn = yarn;
+		this.yarns.push(yarn);
 	}, this);
 
 	//create a new holding hook, if needed:
@@ -594,8 +499,13 @@ RecordMachine.prototype.bringOut = function(cs, hook) {
 	//take carriers out:
 	cs.forEach(function(cn){
 		var c = this.carriers[cn];
-		c.at = -Infinity;
-		delete c.last;
+
+		c.guide.points.forEach(function(p){ p.x = Infinity; });
+
+		console.assert(c.yarn.tail === c.guide, "yarn still attached.");
+		c.yarn.eraseSegment(c.yarn.tail);
+
+		//TODO: disconnect from yarn
 	}, this);
 };
 
@@ -629,6 +539,17 @@ RecordMachine.prototype.stitch = function(l, t) {
 RecordMachine.prototype.rack = function(r) {
 	this.racking = r;
 };
+
+RecordMachine.prototype.moveCarriers = function(d, n, cs) {
+	var bsi = parseNeedle(n);
+	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? -0.5 : 0.5) + (bsi.bed === 'b' ? -this.racking : 0.0));
+	cs.forEach(function(cn){
+		var c = this.carriers[cn];
+		console.assert(c.yarn.tail.guide === c.guide, "carrier should have yarn connected");
+		c.guide.points.forEach(function(p){ p.x = at; });
+	}, this);
+};
+
 RecordMachine.prototype.knit = function(d, n, cs) {
 	var bsi = parseNeedle(n);
 	if (bsi.slider) throw "Can't knit on a slider.";
@@ -636,67 +557,58 @@ RecordMachine.prototype.knit = function(d, n, cs) {
 	//bring in carriers if needed:
 	this.bringInIfNeeded(d, n, cs);
 
-	//TODO: move carriers into position (+ make yarn overlaps)
+	//move carriers into position (TODO: make yarn overlaps)
+	this.moveCarriers(d, n, cs);
 
-
-	//add a new tile to stack of tiles below the needle:
+	//Grab the card for this needle:
 	var needle = this.getNeedle(n);
 
-	var cards = []; //new card stack, back-to-front
+	//Figure out if needle beds need shoving:
+	if (needle.horizonY + 1.5 * LOOP_HEIGHT > this.needlesY) {
+		this.needlesY = needle.horizonY + 1.5 * LOOP_HEIGHT;
+		['b','bs','fs','f'].forEach(function(n){
+			this.needleBeds[n].y = this.needlesY;
+		}, this);
+		this.carrierBed.y = this.needlesY;
+	}
+	needle.horizonY = this.needlesY - 0.5 * LOOP_HEIGHT;
 
+	//make knit-shaped card:
+	var knit = makeKnitCard(this.beds[bsi.bed + (bsi.slider ? 's' : '')], bsi.index, needle.horizonY - 0.5 * LOOP_HEIGHT, (bsi.bed === 'f' ? 1.0 :-1.0));
+
+	//Re-route segments through knit's loop:
+	knit.loop.segments = needle.loop.segments;
+	needle.loop.segments = [];
+
+	//adjust pointers:
+	knit.loop.segments.forEach(function(segment){
+		segment.guide = knit.loop;
+	});
+
+	//form new loop:
 	cs.forEach(function(cn){
 		var c = this.carriers[cn];
-		var card;
-		if (bsi.bed === 'f') {
-			card = makeKnitYarnCard();
-			if (c.last) connectPorts(c.last, (d === '+' ? card.left : card.right));
-			c.last = (d === '+' ? card.right : card.left);
-		} else { //bsi.bed === 'b'
-			card = makeKnitLoopCard();
-		}
-		cards.push(card);
-	}, this);
-
-	if (needle.stack.length) {
-		needle.stack[needle.stack.length-1].cards.forEach(function(card){
-			var ups = [];
-			card.ports.forEach(function(port){
-				if (port.type === PORT_UP) {
-					ups.push(port);
-				}
-			});
-			console.assert(ups.length === 0 || ups.length === 2, "up ports are always loops");
-			if (ups.length === 2) {
-				var loopCard = makeLoopCard();
-				connectPorts(ups[0], loopCard.ports[0]);
-				connectPorts(ups[1], loopCard.ports[1]);
-				cards.push(loopCard);
-			}
-		}, this);
-	}
-
-	cs.forEach(function(cn, i){
-		var c = this.carriers[cn];
-		var card;
-		if (bsi.bed === 'f') {
-			card = makeKnitLoopCard();
+		console.assert(c.yarn.tail.guide === c.guide, "yarn connected to carrier");
+		if (d === '+') {
+			c.yarn.insertGuide(c.yarn.tail, knit.leftYarn, '+');
+			c.yarn.insertGuide(c.yarn.tail, needle.loop, '+');
+			c.yarn.insertGuide(c.yarn.tail, knit.rightYarn, '+');
 		} else {
-			card = makeKnitYarnCard();
-			if (c.last) connectPorts(c.last, (d === '+' ? card.left : card.right));
-			c.last = (d === '+' ? card.right : card.left);
+			c.yarn.insertGuide(c.yarn.tail, knit.rightYarn, '-');
+			c.yarn.insertGuide(c.yarn.tail, needle.loop, '-');
+			c.yarn.insertGuide(c.yarn.tail, knit.leftYarn, '-');
 		}
-		connectPorts(cards[i].mids[0], card.mids[0]);
-		connectPorts(cards[i].mids[1], card.mids[1]);
-		cards.push(card);
+		console.assert(c.yarn.tail.guide === c.guide, "yarn still connected to carrier");
 	}, this);
 
+	//move carriers to other side of stitch:
+	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? 0.5 : -0.5) + (bsi.bed === 'b' ? -this.racking : 0.0));
+	cs.forEach(function(cn){
+		var c = this.carriers[cn];
+		console.assert(c.yarn.tail.guide === c.guide, "carrier should have yarn connected");
+		c.guide.points.forEach(function(p){ p.x = at; });
+	}, this);
 
-	//if there are some cards, push tile onto stack:
-	if (cards.length) {
-		var tile = new Tile();
-		tile.cards = cards;
-		needle.stack.push(tile);
-	}
 };
 RecordMachine.prototype.tuck = function(d, n, cs) {
 };
@@ -714,91 +626,25 @@ RecordMachine.prototype.drawStacks = function() {
 	var svg = document.createElementNS(svgNS, 'svg');
 	window.svg = svg; //DEBUG
 
-	//figure out which tiles are below other tiles:
-	var yOrder = [];
-	var tiles = [];
-
-	var fullWidth = CARD_WIDTH + CARD_GAP;
-
-	//compute x coordinates for all tiles, and read back y-coordinate constraints induced by stacks:
-	for (var n in this.needles) {
-		var bsi = parseNeedle(n);
-		var stack = this.needles[n].stack;
-		stack.forEach(function(tile, i){
-			tile.x = fullWidth * bsi.index;
-			if (bsi.bed === 'b') {
-				tile.x -= this.racking * fullWidth;
-			}
-
-			tiles.push(tile);
-
-			if (i > 0) {
-				yOrder.push({above:tile, below:stack[i-1]});
-			}
-		}, this);
-	}
-
-	console.log("Have " + tiles.length + " tiles.");
-
-	//topological sort based on above/below order:
-	tiles.forEach(function(tile) {
-		tile.below = 0;
-		tile.above = [];
-		tile.y = 0.0; //eventually, will determine y-coordinate by being below everything
-	});
-
-	yOrder.forEach(function(ab){
-		ab.below.below += 1;
-		ab.above.above.push(ab.below);
-	});
-
-	var ready = [];
-	tiles.forEach(function(tile) {
-		if (tile.below === 0) {
-			ready.push(tile);
-			tile.y = 0.0;
-		}
-	});
-
-
-	for (var i = 0; i < ready.length; ++i) {
-		var tile = ready[i];
-		console.assert(tile.below === 0, "tile should be ready");
-		tile.above.forEach(function(a){
-			a.y = Math.min(a.y, tile.y - CARD_HEIGHT - CARD_GAP);
-			console.assert(a.below > 0, "tile should not be ready");
-			a.below -= 1;
-			if (a.below === 0) ready.push(a);
-		});
-	}
-
-
-	//read out cards from tiles:
-	var cards = [];
-
-	tiles.forEach(function(tile) {
-		console.assert(tile.below === 0, "tile was done");
-		tile.cards.forEach(function(card){
-			card.w = CARD_WIDTH;
-			card.h = CARD_HEIGHT;
-			card.y = tile.y;
-			card.x = tile.x;
-			cards.push(card);
-		});
-	});
-
-
 	var min = {x:Infinity, y:-0.5};
 	var max = {x:-Infinity, y:0.5};
 
-	cards.forEach(function(card){
-		min.x = Math.min(min.x, card.x - 0.5 * card.w);
-		min.y = Math.min(min.y, card.y - 0.5 * card.h);
-		max.x = Math.max(max.x, card.x + 0.5 * card.w);
-		max.y = Math.max(max.y, card.y + 0.5 * card.h);
+	this.yarns.forEach(function(yarn){
+		for (var segment = yarn.head; segment !== null; segment = segment.next) {
+			var bed = segment.guide.bed;
+			segment.guide.points.forEach(function(p){
+				min.x = Math.min(min.x, p.x + bed.x);
+				min.y = Math.min(min.y, p.y + bed.y);
+				min.z = Math.min(min.z, p.z + bed.z);
+
+				max.x = Math.max(max.x, p.x + bed.x);
+				max.y = Math.max(max.y, p.y + bed.y);
+				max.z = Math.max(max.z, p.z + bed.z);
+			});
+		}
 	});
 
-	console.log("Have " + cards.length + " cards, in the [" + min.x + ", " + max.x + "]x[" + min.y + "," + max.y + "] range.");
+	console.log("Have " + this.yarns.length + " yarns, in the [" + min.x + ", " + max.x + "]x[" + min.y + "," + max.y + "] range.");
 
 	var width = 1.0;
 	if (min.x < max.x) {
@@ -808,53 +654,39 @@ RecordMachine.prototype.drawStacks = function() {
 	if (min.y < max.y) {
 		height = max.y - min.y + 1.0;
 	}
-	svg.setAttribute("width", Math.ceil(width * 20) + "px");
-	svg.setAttribute("height", Math.ceil(height * 20) + "px");
+	svg.setAttribute("width", Math.ceil(width * 40) + "px");
+	svg.setAttribute("height", Math.ceil(height * 40) + "px");
 
 	svg.setAttribute("viewBox", "0 0 " + width + " " + height);
 	svg.setAttribute("style", "background:#eee");
 
-	var dCard = "";
-	var dPort = "";
-	cards.forEach(function(card){
-		card.yarns.forEach(function(yarn){
-			yarn.points.forEach(function(p, i){
-				if (i === 0) {
-					dCard += "M";
-				}
-				var x = card.w * (p.x - 0.5) + card.x - min.x + 0.5;
-				var y = height - (card.h * (p.y - 0.5) + card.y - min.y + 0.5);
-				dCard += " " + x.toFixed(2) + "," + y.toFixed(2);
+	var dYarn = "";
+
+	this.yarns.forEach(function(yarn){
+		dYarn += "M";
+		for (var segment = yarn.head; segment !== null; segment = segment.next) {
+			var bed = segment.guide.bed;
+			var pts = segment.guide.points;
+			if (segment.direction === '-') {
+				pts = pts.slice();
+				pts.reverse();
+			}
+			pts.forEach(function(p, i){
+				var v = {
+					x:p.x + bed.x,
+					y:p.y + bed.y,
+					z:p.z + bed.z
+				};
+				v.x = v.x - min.x + 0.5;
+				v.y = height - (v.y - min.y + 0.5);
+				dYarn += " ";
+				dYarn += v.x.toFixed(2) + " " + v.y.toFixed(2);
 			});
-		});
-		function portPoint(port) {
-			var p;
-			if (port === port.yarn.start) {
-				p = port.yarn.points[0];
-			} else { console.assert(port === port.yarn.end, "port should start or end its yarn");
-				p = port.yarn.points[port.yarn.points.length-1];
-			}
-			return {
-				x: port.card.w * (p.x - 0.5) + port.card.x - min.x + 0.5,
-				y: height - (port.card.h * (p.y - 0.5) + port.card.y - min.y + 0.5)
-			};
 		}
-		card.ports.forEach(function(port){
-			if (port.other) {
-				var from = portPoint(port);
-				var to = portPoint(port.other);
-				dPort += "M" + from.x.toFixed(2) + "," + from.y.toFixed(2);
-				dPort += " " + to.x.toFixed(2) + "," + to.y.toFixed(2);
-			}
-		});
 	});
 	var path = document.createElementNS(svgNS, 'path');
-	path.setAttribute("style", "stroke-width:0.05;stroke:#000;fill:none;");
-	path.setAttribute("d", dCard);
-	svg.appendChild(path);
-	var path = document.createElementNS(svgNS, 'path');
 	path.setAttribute("style", "stroke-width:0.05;stroke:#f00;fill:none;");
-	path.setAttribute("d", dPort);
+	path.setAttribute("d", dYarn);
 	svg.appendChild(path);
 
 	return svg;
