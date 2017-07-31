@@ -154,7 +154,7 @@ function parseKnitout(codeText, machine) {
 				var n = parseNeedle(tokens.shift());
 				var cs = parseCarrierSet(tokens);
 				machine.tuck(d, n, cs);
-			} else if (op === "split") {
+			} else if (op === "split" || op === "xfer") {
 				if (op === "xfer") {
 					if (tokens.length !== 2) throw "xfer takes exactly two arguments";
 					tokens.unshift("+");
@@ -307,7 +307,8 @@ function Bed(x,y,z) {
 
 var NEEDLE_SPACING = 1.0;
 var LOOP_WIDTH = 0.5;
-var LOOP_HEIGHT = 0.8;
+var LOOP_HEIGHT = 0.6;
+var LOOP_PADDING = 0.2;
 
 function makeNeedleCard(bed, index) {
 	var card = new Card();
@@ -564,8 +565,8 @@ RecordMachine.prototype.knit = function(d, n, cs) {
 	var needle = this.getNeedle(n);
 
 	//Figure out if needle beds need shoving:
-	if (needle.horizonY + 1.5 * LOOP_HEIGHT > this.needlesY) {
-		this.needlesY = needle.horizonY + 1.5 * LOOP_HEIGHT;
+	if (needle.horizonY + 1.5 * LOOP_HEIGHT + LOOP_PADDING > this.needlesY) {
+		this.needlesY = needle.horizonY + 1.5 * LOOP_HEIGHT + LOOP_PADDING;
 		['b','bs','fs','f'].forEach(function(n){
 			this.needleBeds[n].y = this.needlesY;
 		}, this);
@@ -611,8 +612,77 @@ RecordMachine.prototype.knit = function(d, n, cs) {
 
 };
 RecordMachine.prototype.tuck = function(d, n, cs) {
+	var bsi = parseNeedle(n);
+	if (bsi.slider) throw "Can't knit on a slider.";
+
+	//bring in carriers if needed:
+	this.bringInIfNeeded(d, n, cs);
+
+	//move carriers into position (TODO: make yarn overlaps)
+	this.moveCarriers(d, n, cs);
+
+	//Grab the card for this needle:
+	var needle = this.getNeedle(n);
+
+	//TODO: add a some 'tuck-like' yarn guides into the mix
+
+	//form new loop:
+	cs.forEach(function(cn){
+		var c = this.carriers[cn];
+		console.assert(c.yarn.tail.guide === c.guide, "yarn connected to carrier");
+		if (d === '+') {
+			c.yarn.insertGuide(c.yarn.tail, needle.loop, '+');
+		} else {
+			c.yarn.insertGuide(c.yarn.tail, needle.loop, '-');
+		}
+		console.assert(c.yarn.tail.guide === c.guide, "yarn still connected to carrier");
+	}, this);
+
+	//move carriers to other side of stitch:
+	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? 0.5 : -0.5) + (bsi.bed === 'b' ? -this.racking : 0.0));
+	cs.forEach(function(cn){
+		var c = this.carriers[cn];
+		console.assert(c.yarn.tail.guide === c.guide, "carrier should have yarn connected");
+		c.guide.points.forEach(function(p){ p.x = at; });
+	}, this);
+
 };
 RecordMachine.prototype.split = function(d, n, n2, cs) {
+	var bsi = parseNeedle(n);
+	var bsi2 = parseNeedle(n2);
+	if (bsi.slider && cs.length) throw "Can't split from a slider.";
+	if (bis.slider && bsi2.slider) throw "Can't transfer slider-to-slider.";
+
+	//bring in carriers if needed:
+	this.bringInIfNeeded(d, n, cs);
+
+	//move carriers into position (TODO: make yarn overlaps)
+	this.moveCarriers(d, n, cs);
+
+	//Grab the card for this needle:
+	var needle = this.getNeedle(n);
+
+	//TODO: add a some 'tuck-like' yarn guides into the mix
+
+	//form new loop:
+	cs.forEach(function(cn){
+		var c = this.carriers[cn];
+		console.assert(c.yarn.tail.guide === c.guide, "yarn connected to carrier");
+		if (d === '+') {
+			c.yarn.insertGuide(c.yarn.tail, needle.loop, '+');
+		} else {
+			c.yarn.insertGuide(c.yarn.tail, needle.loop, '-');
+		}
+		console.assert(c.yarn.tail.guide === c.guide, "yarn still connected to carrier");
+	}, this);
+
+	//move carriers to other side of stitch:
+	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? 0.5 : -0.5) + (bsi.bed === 'b' ? -this.racking : 0.0));
+	cs.forEach(function(cn){
+		var c = this.carriers[cn];
+		console.assert(c.yarn.tail.guide === c.guide, "carrier should have yarn connected");
+		c.guide.points.forEach(function(p){ p.x = at; });
+	}, this);
 };
 RecordMachine.prototype.miss = function(d, n, cs) {
 };
