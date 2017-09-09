@@ -459,7 +459,7 @@ RecordMachine.prototype.bringInIfNeeded = function(d, n, cs) {
 	//'at' is where the hook parks (and where the carriers begin):
 	// (that is, just before 'n' in direction 'd')
 	var bsi = parseNeedle(n);
-	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? -0.5 : 0.5) + (bsi.bed === 'b' ? -this.racking : 0.0) );
+	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? -0.5 : 0.5) + (bsi.bed === 'b' ? this.racking : 0.0) );
 
 	//move carriers, create yarn, remove mark:
 	cs.forEach(function(cn){
@@ -543,7 +543,7 @@ RecordMachine.prototype.rack = function(r) {
 
 RecordMachine.prototype.moveCarriers = function(d, n, cs) {
 	var bsi = parseNeedle(n);
-	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? -0.5 : 0.5) + (bsi.bed === 'b' ? -this.racking : 0.0));
+	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? -0.5 : 0.5) + (bsi.bed === 'b' ? this.racking : 0.0));
 	cs.forEach(function(cn){
 		var c = this.carriers[cn];
 		console.assert(c.yarn.tail.guide === c.guide, "carrier should have yarn connected");
@@ -603,7 +603,7 @@ RecordMachine.prototype.knit = function(d, n, cs) {
 	}, this);
 
 	//move carriers to other side of stitch:
-	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? 0.5 : -0.5) + (bsi.bed === 'b' ? -this.racking : 0.0));
+	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? 0.5 : -0.5) + (bsi.bed === 'b' ? this.racking : 0.0));
 	cs.forEach(function(cn){
 		var c = this.carriers[cn];
 		console.assert(c.yarn.tail.guide === c.guide, "carrier should have yarn connected");
@@ -639,7 +639,7 @@ RecordMachine.prototype.tuck = function(d, n, cs) {
 	}, this);
 
 	//move carriers to other side of stitch:
-	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? 0.5 : -0.5) + (bsi.bed === 'b' ? -this.racking : 0.0));
+	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? 0.5 : -0.5) + (bsi.bed === 'b' ? this.racking : 0.0));
 	cs.forEach(function(cn){
 		var c = this.carriers[cn];
 		console.assert(c.yarn.tail.guide === c.guide, "carrier should have yarn connected");
@@ -651,7 +651,7 @@ RecordMachine.prototype.split = function(d, n, n2, cs) {
 	var bsi = parseNeedle(n);
 	var bsi2 = parseNeedle(n2);
 	if (bsi.slider && cs.length) throw "Can't split from a slider.";
-	if (bis.slider && bsi2.slider) throw "Can't transfer slider-to-slider.";
+	if (bsi.slider && bsi2.slider) throw "Can't transfer slider-to-slider.";
 
 	//bring in carriers if needed:
 	this.bringInIfNeeded(d, n, cs);
@@ -677,7 +677,7 @@ RecordMachine.prototype.split = function(d, n, n2, cs) {
 	}, this);
 
 	//move carriers to other side of stitch:
-	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? 0.5 : -0.5) + (bsi.bed === 'b' ? -this.racking : 0.0));
+	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? 0.5 : -0.5) + (bsi.bed === 'b' ? this.racking : 0.0));
 	cs.forEach(function(cn){
 		var c = this.carriers[cn];
 		console.assert(c.yarn.tail.guide === c.guide, "carrier should have yarn connected");
