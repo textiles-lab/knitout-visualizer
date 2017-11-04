@@ -381,6 +381,9 @@ function makeMissCard(bed, from,to, loops) {
 	card.height = NUDGE_WIDTH;
 	card.top = card.height;
 
+	card.from = from;
+	card.to = to;
+
 	card.bed = bed;
 	card.loops = loops;
 	card.outLoops = [];
@@ -419,6 +422,61 @@ function makeMissCard(bed, from,to, loops) {
 			drawLoops.call(this);
 			drawYarn.call(this);
 		}
+	};
+
+
+	return card;
+}
+
+function makeLoopCard(bed, from,to, loops, stackLoops) {
+	console.assert(['f','fs','bs','b'].indexOf(bed) !== -1, "LoopCard must be on known bed");
+	console.assert(['down', 'in', 'out'].indexOf(from) !== -1, "makeLoopCard wants reasonable from");
+	console.assert(['in', 'out', 'up'].indexOf(to) !== -1, "makeLoopCard wants reasonable to");
+
+	console.assert(Array.isArray(loops), "makeLoopCard must have [possibly empty] loops");
+
+	var card = new Card();
+	card.width = NEEDLE_WIDTH;
+	card.height = NUDGE_WIDTH;
+	card.top = card.height;
+
+	card.from = from;
+	card.to = to;
+
+	card.bed = bed;
+	if (from === 'down') {
+		card.loops = loops;
+	} else {
+		card.loops = stackLoops; //or something
+	}
+
+	card.outLoops = [];
+	if (to === 'up') {
+		//TODO: figure out what we actually want to store in outLoops anyway
+		loops.forEach(function(l, li){
+			card.outLoops = [{card:card, loop:li}];
+		});
+	}
+
+	card.draw = function(ctx, x) {
+		ctx.beginPath();
+
+		[-0.2, 0.2].forEach(function(ofs){
+			if (this.from === 'down') {
+				ctx.moveTo(x - ofs * this.width, this.top - this.height);
+			} else if (this.from === 'in' || this.from === 'out') {
+				ctx.moveTo(x - ofs * this.width, this.top - 0.5 * this.height);
+			}
+			ctx.lineTo(x - ofs * this.width, this.top - 0.5 * this.height);
+			if (this.to === 'up') {
+				ctx.lineTo(x - ofs * this.width, this.top);
+			} else if (this.to === 'in' || this.to === 'out') {
+				ctx.lineTo(x - ofs * this.width, this.top - 0.5 * this.height);
+			}
+		}, this);
+
+		ctx.strokeStyle = '#0ff';
+		ctx.stroke();
 	};
 
 
@@ -635,42 +693,43 @@ RecordMachine.prototype.moveCarriers = function(d, n, cs) {
 };
 */
 
+
+//helper that simultaneously adds many cards to stacks, all at the same (minimum) y-coordinate:
+RecordMachine.prototype.stackCards = function(cards, flex) {
+	//Figure out y-coordinate and add cards to stacks:
+	var yarnY = 0.0;
+	if (flex) {
+		yarnY = Math.max(yarnY, flex.top - 0.5 * NUDGE_WIDTH);
+	}
+	cards.forEach(function(cs){
+		var card = cs[0];
+		var stack = cs[1];
+		if (stack.length) {
+			yarnY = Math.max(yarnY, stack[stack.length-1].top + 0.5 * card.height);
+		}
+	});
+	cards.forEach(function(cs){
+		var card = cs[0];
+		var stack = cs[1];
+		card.top = yarnY + 0.5 * card.height;
+		stack.push(card);
+	});
+
+	if (flex) {
+		flex.height = yarnY + 0.5 * NUDGE_WIDTH - (flex.top - flex.height);
+		flex.top = yarnY + 0.5 * NUDGE_WIDTH;
+	}
+
+	cards = [];
+	flex = null;
+};
+
 RecordMachine.prototype.knit = function(d, n, cs) {
 	var bsi = parseNeedle(n);
 	if (bsi.slider) throw "Can't knit on a slider.";
 
 	var cards = []; //cards and the stacks to add them on -- used to compute yarnY.
 	var flex = null; //card to adjust height of to match yarnY. (it's always a nudge-stack card)
-
-	//flush current list of cards and flex to stacks:
-	function stackCards() {
-		//Figure out y-coordinate and add cards to stacks:
-		var yarnY = 0.0;
-		if (flex) {
-			yarnY = Math.max(yarnY, flex.top - 0.5 * NUDGE_WIDTH);
-		}
-		cards.forEach(function(cs){
-			var card = cs[0];
-			var stack = cs[1];
-			if (stack.length) {
-				yarnY = Math.max(yarnY, stack[stack.length-1].top + 0.5 * card.height);
-			}
-		});
-		cards.forEach(function(cs){
-			var card = cs[0];
-			var stack = cs[1];
-			card.top = yarnY + 0.5 * card.height;
-			stack.push(card);
-		});
-
-		if (flex) {
-			flex.height = yarnY + 0.5 * NUDGE_WIDTH - (flex.top - flex.height);
-			flex.top = yarnY + 0.5 * NUDGE_WIDTH;
-		}
-
-		cards = [];
-		flex = null;
-	}
 
 	//Build yarn cards over to proper needle:
 	cs.forEach(function(cn){
@@ -755,7 +814,7 @@ RecordMachine.prototype.knit = function(d, n, cs) {
 
 			//handle U-turn:
 			//(note: could probably detect and avoid stackCards when lastCard is 'from' the opposite of d)
-			stackCards.call(this);
+			this.stackCards(cards,flex); cards = []; flex = null;
 			if (c.lastCard) {
 				c.lastCard.to = (d === '+' ? 'right' : 'left');
 				flex = c.lastCard;
@@ -796,7 +855,7 @@ RecordMachine.prototype.knit = function(d, n, cs) {
 
 
 	//Put the rest of the cards on stacks:
-	stackCards.call(this);
+	this.stackCards(cards,flex); cards = []; flex = null;
 
 	/*
 	//bring in carriers if needed:
@@ -900,6 +959,26 @@ RecordMachine.prototype.split = function(d, n, n2, cs) {
 	if (bsi.slider && cs.length) throw "Can't split from a slider.";
 	if (bsi.slider && bsi2.slider) throw "Can't transfer slider-to-slider.";
 
+	if (cs.length === 0) {
+		// "simple" xfer:
+		var cards = [];
+		var slot = this.getSlot(bsi.bed + (bsi.slider ? 's' : ''), bsi.index);
+		var loops = (slot.length === 0 ? [] : slot[slot.length-1].outLoops);
+		cards.push([
+			makeLoopCard(bsi.bed + (bsi.slider ? 's' : ''), 'down', (bsi.bed === 'f' ? 'in' : 'out'), loops),
+			slot
+		]);
+		var slot2 = this.getSlot(bsi2.bed + (bsi2.slider ? 's' : ''), bsi2.index);
+		var loops2 = (slot2.length === 0 ? [] : slot2[slot2.length-1].outLoops);
+		cards.push([
+			makeLoopCard(bsi2.bed + (bsi2.slider ? 's' : ''), (bsi2.bed === 'f' ? 'in' : 'out'), 'up', loops, loops2),
+			slot2
+		]);
+		this.stackCards(cards);
+	} else {
+		//must TODO!
+	}
+
 /*
 	//bring in carriers if needed:
 	this.bringInIfNeeded(d, n, cs);
@@ -1002,7 +1081,7 @@ RecordMachine.prototype.drawStacks = function() {
 				card.draw(ctx, x);
 
 				if (prev && prev.outLoops && prev.outLoops.length) {
-					console.assert(card.loops && card.loops.length, "outLoops imply inLoops");
+					console.assert(card.loops && card.loops.length, "outLoops imply loops");
 					ctx.beginPath();
 					ctx.moveTo(x - 0.2 * card.width, card.top - card.height);
 					ctx.lineTo(x - 0.2 * prev.width, prev.top);
