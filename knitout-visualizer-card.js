@@ -336,15 +336,22 @@ function Card() {
 
 	//default draw function:
 	this.draw = function(ctx, x) {
-		ctx.fillStyle = '#888';
+		ctx.globalAlpha = 0.5;
+		if (this.bg) {
+			ctx.fillStyle = this.bg;
+		} else {
+			ctx.fillStyle = '#222';
+		}
 		ctx.fillRect(x - 0.5 * this.width, this.top - this.height, this.width, this.height);
+		function r() { return (Math.random() - 0.5) * 0.1; }
 		ctx.beginPath();
-		ctx.moveTo(x - 0.5 * this.width, this.top - this.height);
-		ctx.lineTo(x + 0.5 * this.width, this.top);
-		ctx.moveTo(x - 0.5 * this.width, this.top);
-		ctx.lineTo(x + 0.5 * this.width, this.top - this.height);
+		ctx.moveTo(x - 0.5 * this.width + r(), this.top - this.height + r());
+		ctx.lineTo(x + 0.5 * this.width + r(), this.top + r());
+		ctx.moveTo(x - 0.5 * this.width + r(), this.top + r());
+		ctx.lineTo(x + 0.5 * this.width + r(), this.top - this.height + r());
 		ctx.strokeStyle = '#ff0';
 		ctx.stroke();
+		ctx.globalAlpha = 1.0;
 	};
 }
 
@@ -415,76 +422,85 @@ function makeKnitCard(direction, bed, yarns, loops) {
 		card.outLoops.push(new Loop(l, r));
 	});
 
-	card.draw = function(ctx, x) {
+	return card;
+}
 
-		var d = { x:1.0, y:1.0 };
-		d.x *= 0.03 * NEEDLE_WIDTH;
-		d.y *= 0.03 * NEEDLE_WIDTH;
-		var o = { x:-1.0, y:1.0 };
-		o.x *= 0.03 * NEEDLE_WIDTH;
-		o.y *= 0.03 * NEEDLE_WIDTH;
+function makeTuckCard(direction, bed, yarns, loops) {
+	console.assert(direction === '+' || direction === '-', "Tuck must happen in + or - direction");
+	console.assert(bed === 'f' || bed === 'b', "Tuck must happen on front or back bed");
+	console.assert(Array.isArray(yarns) && Array.isArray(loops), "makeTuckCard must have [possibly empty] yarns and loops");
+	yarns.forEach(function(yarn){ console.assert(yarn instanceof Yarn, "Yarns array should contain yarns."); });
+	loops.forEach(function(loop){ console.assert(loop instanceof Loop, "Loops array should contain loops."); });
 
-		var dy = d.y + o.y;
+	var card = new Card();
+	card.width = NEEDLE_WIDTH;
+	card.height = 0.7 * NEEDLE_WIDTH;
+	card.top = card.height;
+	card.direction = direction; //store what direction the stitch was made in
+	card.bed = bed; //store what bed the stitch was made on
 
-		function loopTop() {
-			if (this.loops.length === 0) return;
-			ctx.beginPath();
-			ctx.moveTo(x + 0.2 * this.width + d.x + o.x, this.top - 0.5 * this.height + d.y + o.y + dy);
-			ctx.lineTo(x - 0.2 * this.width - d.x - o.x, this.top - 0.5 * this.height + d.y + o.y + dy);
+	card.yarns = yarns.slice();
+	card.loops = loops.slice();
 
-			ctx.strokeStyle = '#00f';
-			ctx.stroke();
+	//d/o/dy change loop shape:
+	var d = { x:1.0, y:1.0 };
+	d.x *= 0.03 * NEEDLE_WIDTH;
+	d.y *= 0.03 * NEEDLE_WIDTH;
+	var o = { x:-1.0, y:1.0 };
+	o.x *= 0.03 * NEEDLE_WIDTH;
+	o.y *= 0.03 * NEEDLE_WIDTH;
+	var dy = d.y + o.y;
+
+	card.outLoops = [];
+
+	function doLoops() {
+		loops.forEach(function(loop){
+			//returned loop is ignored (loop is finished)
+			card.outLoops.push(loop.addPoints(card, [
+				{x: -0.2 * card.width, y: -0.5 * card.height },
+				{x: -0.2 * card.width, y: 0.5 * card.height },
+			],[
+				{x: 0.2 * card.width, y: -0.5 * card.height },
+				{x: 0.2 * card.width, y: 0.5 * card.height },
+			]));
+		});
+	}
+
+	if (card.bed === 'b') doLoops();
+
+	yarns.forEach(function(yarn){
+		var l, r;
+		if (direction === '+') {
+			yarn.addPoint(null,  card, - 0.5 * card.width, - d.y - o.y + dy);
+			yarn.addPoint(null,  card, - 0.2 * card.width + d.x + o.x, - d.y - o.y + dy);
+			yarn.addPoint(null,  card, - 0.2 * card.width + d.x - o.x, - d.y + o.y + dy);
+			l = yarn.addPoint(null,  card, - 0.2 * card.width, 0.5 * card.height);
+
+			r = yarn.addPoint(null,  card, + 0.2 * card.width, 0.5 * card.height);
+			yarn.addPoint(null,  card, + 0.2 * card.width - d.x + o.x, - d.y + o.y + dy);
+			yarn.addPoint(null,  card, + 0.2 * card.width - d.x - o.x, - d.y - o.y + dy);
+			yarn.addPoint(null,  card, + 0.5 * card.width, - d.y - o.y + dy);
+		} else { //direction === '-'
+			yarn.addPoint(null,  card, + 0.5 * card.width, - d.y - o.y + dy);
+			yarn.addPoint(null,  card, + 0.2 * card.width - d.x - o.x, - d.y - o.y + dy);
+			yarn.addPoint(null,  card, + 0.2 * card.width - d.x + o.x, - d.y + o.y + dy);
+			r = yarn.addPoint(null,  card, + 0.2 * card.width, 0.5 * card.height);
+
+			l = yarn.addPoint(null,  card, - 0.2 * card.width, 0.5 * card.height);
+			yarn.addPoint(null,  card, - 0.2 * card.width + d.x - o.x, - d.y + o.y + dy);
+			yarn.addPoint(null,  card, - 0.2 * card.width + d.x + o.x, - d.y - o.y + dy);
+			yarn.addPoint(null,  card, - 0.5 * card.width, - d.y - o.y + dy);
 		}
+		card.outLoops.push(new Loop(l, r));
+	});
 
-		function yarn() {
-			if (this.yarns.length === 0) return;
-			ctx.beginPath();
-			ctx.moveTo(x - 0.5 * this.width, this.top - 0.5 * this.height - d.y - o.y + dy);
-			ctx.lineTo(x - 0.2 * this.width + d.x + o.x, this.top - 0.5 * this.height - d.y - o.y + dy);
-			ctx.lineTo(x - 0.2 * this.width + d.x - o.x, this.top - 0.5 * this.height - d.y + o.y + dy);
-			ctx.lineTo(x - 0.2 * this.width, this.top);
-
-			ctx.moveTo(x + 0.5 * this.width, this.top - 0.5 * this.height - d.y - o.y + dy);
-			ctx.lineTo(x + 0.2 * this.width - d.x - o.x, this.top - 0.5 * this.height - d.y - o.y + dy);
-			ctx.lineTo(x + 0.2 * this.width - d.x + o.x, this.top - 0.5 * this.height - d.y + o.y + dy);
-			ctx.lineTo(x + 0.2 * this.width, this.top);
-
-			ctx.strokeStyle = '#ff0';
-			ctx.stroke();
-		}
-
-		function loopBottom() {
-			if (this.loops.length === 0) return;
-			ctx.beginPath();
-			ctx.moveTo(x + 0.2 * this.width, this.top - this.height);
-			ctx.lineTo(x + 0.2 * this.width + d.x - o.x, this.top - 0.5 * this.height + d.y - o.y + dy);
-			ctx.lineTo(x + 0.2 * this.width + d.x + o.x, this.top - 0.5 * this.height + d.y + o.y + dy);
-
-			ctx.moveTo(x - 0.2 * this.width - d.x - o.x, this.top - 0.5 * this.height + d.y + o.y + dy);
-			ctx.lineTo(x - 0.2 * this.width - d.x + o.x, this.top - 0.5 * this.height + d.y - o.y + dy);
-			ctx.lineTo(x - 0.2 * this.width, this.top - this.height);
-
-			ctx.strokeStyle = '#00f';
-			ctx.stroke();
-		}
-
-		if (this.bed === 'f') {
-			loopTop.call(this);
-			yarn.call(this);
-			loopBottom.call(this);
-		} else {
-			loopBottom.call(this);
-			yarn.call(this);
-			loopTop.call(this);
-		}
-
-	};
+	if (card.bed === 'f') doLoops();
 
 	return card;
 }
 
 
-function makeYarnNudgeCard(from,to, yarns) {
+function makeYarnNudgeCard(from,to, yarns, bg) {
 	console.assert(['left', 'right', 'down', 'in', 'out', '*'].indexOf(from) != -1, "Must have valid 'from'");
 	console.assert(['left', 'right', 'up', 'in', 'out', '*'].indexOf(to) != -1, "Must have valid 'to'");
 	console.assert(Array.isArray(yarns), "Yarns must be array.");
@@ -494,6 +510,8 @@ function makeYarnNudgeCard(from,to, yarns) {
 	card.width = NUDGE_WIDTH;
 	card.height = NUDGE_WIDTH;
 	card.top = card.height;
+
+	if (typeof(bg) !== 'undefined') card.bg = bg;
 
 	card.from = from;
 	card.to = '*';
@@ -521,7 +539,7 @@ function makeYarnNudgeCard(from,to, yarns) {
 			});
 		} else if (card.from === 'in' || card.from === 'out') {
 			card.flexPoints.push({
-				ax: 0.0, ay:0.0, ox:0.0, oy:0.0, pt:yarn.addPoint(null,  card, 0.0, 0.0)
+				ax: 0.0, ay:-0.5, ox:0.0, oy:0.5 * NUDGE_WIDTH, pt:yarn.addPoint(null,  card, 0.0, 0.0)
 			});
 		}
 		card.flexPoints.push({
@@ -561,8 +579,8 @@ function makeYarnNudgeCard(from,to, yarns) {
 			a = { ax:0.0, ay:0.5, ox:0.0, oy:0.0 };
 			b = { ax:0.0, ay:0.5, ox:0.0, oy:0.0 };
 		} else if (card.to === 'in' || card.to === 'out' || card.to === '*') {
-			a = { ax:0.0, ay:0.0, ox:0.0, oy:0.0 };
-			b = { ax:0.0, ay:0.0, ox:0.0, oy:0.0 };
+			a = { ax: 0.0, ay:0.5, ox:0.0, oy:-0.5 * NUDGE_WIDTH };
+			b = { ax: 0.0, ay:0.5, ox:0.0, oy:-0.5 * NUDGE_WIDTH };
 		}
 		this.flexPoints.forEach(function(f){
 			if (f.tag === 'a') {
@@ -578,7 +596,10 @@ function makeYarnNudgeCard(from,to, yarns) {
 
 	card.flex(); //do initial layout
 
+	card.oldDraw = card.draw;
+
 	card.draw = function(ctx, x) {
+		//this.oldDraw(ctx, x); //DEBUG
 		ctx.beginPath();
 
 		if (this.from === 'left') {
@@ -603,7 +624,7 @@ function makeYarnNudgeCard(from,to, yarns) {
 			ctx.lineTo(x, this.top - 0.5 * NUDGE_WIDTH);
 		}
 
-		ctx.strokeStyle = '#ff0';
+		ctx.strokeStyle = '#f0f';
 		ctx.stroke();
 	};
 
@@ -787,6 +808,9 @@ function RecordMachine() {
 	//layers for each bed and -- eventually -- carrier:
 	this.layers = { "b":[], "bs":[], "fs":[], "f":[] };
 
+	//links between front and back beds:
+	this.links = [];
+
 	//name -> carriers map starts empty:
 	this.carriers = {};
 
@@ -814,7 +838,7 @@ RecordMachine.prototype.getSlot = function(layerName, idx, d) {
 	var layer = this.layers[layerName];
 
 	var slotName;
-	if (typeof(d) === 'undefined') {
+	if (typeof(d) === 'undefined' || d === '') {
 		slotName = idx;
 	} else {
 		if (d === '+') {
@@ -822,7 +846,7 @@ RecordMachine.prototype.getSlot = function(layerName, idx, d) {
 		} else if (d === '-') {
 			slotName = idx + "-";
 		} else {
-			console.assert(false, "d should be '+','-', or undefined");
+			console.assert(false, "d should be '+','-','' or undefined");
 		}
 	}
 	if (!(slotName in layer)) {
@@ -1003,11 +1027,24 @@ RecordMachine.prototype.moveCarriers = function(d, n, cs) {
 };
 */
 
+//helper that adds a link between a given frontIndex and backIndex and makes sure it clears any link that it crosses by at least NUDGE_WIDTH:
+RecordMachine.prototype.addLink = function(link) {
+	if (!('yarnY' in link)) link.yarnY = 0.0;
+	link.yarnY = 0.0;
+	this.links.forEach(function(l){
+		if (l.backIndex < link.backIndex && l.frontIndex < link.frontIndex) return;
+		if (l.backIndex > link.backIndex && l.frontIndex > link.frontIndex) return;
+		link.yarnY = Math.max(link.yarnY, l.yarnY + NUDGE_WIDTH);
+	});
+	this.links.push(link);
+	return link.yarnY;
+};
+
 
 //helper that simultaneously adds many cards to stacks, all at the same (minimum) y-coordinate:
-RecordMachine.prototype.stackCards = function(cards, flex) {
+RecordMachine.prototype.stackCards = function(cards, flex, minYarnY) {
 	//Figure out y-coordinate and add cards to stacks:
-	var yarnY = 0.0;
+	var yarnY = (typeof(minYarnY) === 'undefined' ? 0.0 : minYarnY);
 	if (flex) {
 		yarnY = Math.max(yarnY, flex.top - 0.5 * NUDGE_WIDTH);
 	}
@@ -1033,11 +1070,32 @@ RecordMachine.prototype.stackCards = function(cards, flex) {
 
 	cards = [];
 	flex = null;
+
+	return yarnY;
 };
 
-RecordMachine.prototype.knit = function(d, n, cs) {
+//Helpers for iterating slots + nudges:
+function slotToIndex(s) {
+	var si = s.index * 3 + 1;
+	if (s.nudge !== '') si += (s.nudge === '+' ? 1 : -1);
+
+	var test = indexToSlot(si);
+	console.assert(test.index === s.index && test.nudge === s.nudge, "slotToIndexToSlot should be okay");
+
+	return si;
+}
+function indexToSlot(idx) {
+	return {
+		index:Math.floor(idx / 3),
+		nudge:['-','','+'][idx % 3]
+	};
+}
+
+//move carriers in cs so that they line up properly to form a stitch in direction 'd' on needle 'n':
+// will add cards as needed
+// return value has {cards:, flex:} giving the cards to add to stacks and card to flex when adjusting yarn height.
+RecordMachine.prototype.moveCarriers = function(d, n, cs) {
 	var bsi = parseNeedle(n);
-	if (bsi.slider) throw "Can't knit on a slider.";
 
 	var cards = []; //cards and the stacks to add them on -- used to compute yarnY.
 	var flex = null; //card to adjust height of to match yarnY. (it's always a nudge-stack card)
@@ -1050,7 +1108,7 @@ RecordMachine.prototype.knit = function(d, n, cs) {
 			c.yarn = new Yarn(this.yarnColors[0]);
 			this.yarnColors.push(this.yarnColors.shift());
 			this.yarns.push(c.yarn);
-			var card = 	makeYarnNudgeCard('*', (d === '+' ? 'right' : 'left'), [c.yarn]);
+			var card = makeYarnNudgeCard('*', (d === '+' ? 'right' : 'left'), [c.yarn]);
 			var slot = this.getSlot(bsi.bed, bsi.index, (d === '+' ? '-' : '+'));
 			cards.push([card, slot]);
 			return;
@@ -1060,32 +1118,59 @@ RecordMachine.prototype.knit = function(d, n, cs) {
 		var s = {index:c.lastSlot.index, nudge:c.lastSlot.nudge};
 		var t = {index: bsi.index, nudge:(d === '+' ? '-' : '+')};
 
-		function slotToIndex(s) {
-			var si = s.index * 3 + 1;
-			if (s.nudge !== '') si += (s.nudge === '+' ? 1 : -1);
-
-			var test = indexToSlot(si);
-			console.assert(test.index === s.index && test.nudge === s.nudge, "slotToIndexToSlot should be okay");
-
-			return si;
-		}
-		function indexToSlot(idx) {
-			return {
-				index:Math.floor(idx / 3),
-				nudge:['-','','+'][idx % 3]
-			};
-		}
-
+	
 		//Rather that being general to start with, I'll try to handle some well-defined cases:
 		//NOTE: I'm assuming that c.lastCard is already at the top of its stack
+		if (c.lastSlot.bed !== bsi.bed) {
+			//create cards to move from the old bed to the new bed.
+			var beds = ['b', 'bs', 'fs', 'f'];
+			var si = beds.indexOf(c.lastSlot.bed);
+			var ti = beds.indexOf(bsi.bed);
+			var link = null;
+			if (c.lastSlot.bed[0] !== bsi.bed[0]) {
+				console.assert((si < 1.5) !== (ti < 1.5), "different bed letters => crossing bed gap");
+				//crossing bed gap => need to add link
+				link = {
+					backIndex:slotToIndex(c.lastSlot),
+					frontIndex:slotToIndex(c.lastSlot)
+				};
+			} else {
+				console.assert((si < 1.5) === (ti < 1.5), "same bed letters => not crossing bed gap");
+			}
+			if (si < ti) {
+				c.lastCard.setTo('out');
+				flex = c.lastCard;
+				for (var i = si + 1; i <= ti; ++i) {
+					c.lastSlot.bed = beds[i];
+					var slot = this.getSlot(c.lastSlot.bed, c.lastSlot.index, c.lastSlot.nudge);
+					c.lastCard = makeYarnNudgeCard('in', (i == ti ? '*' : 'out'), [c.yarn], '#f0f');
+					cards.push([ c.lastCard, slot ]);
+				}
+			} else { console.assert(si > ti, "last bed != bed, of course");
+				c.lastCard.setTo('in');
+				flex = c.lastCard;
+				for (var i = si - 1; i >= ti; --i) {
+					c.lastSlot.bed = beds[i];
+					var slot = this.getSlot(c.lastSlot.bed, c.lastSlot.index, c.lastSlot.nudge);
+					c.lastCard = makeYarnNudgeCard('out', (i == ti ? '*' : 'in'), [c.yarn], '#0f0');
+					cards.push([ c.lastCard, slot ]);
+				}
+			}
+			if (link) {
+				this.addLink(link);
+				link.yarnY = this.stackCards(cards,flex, link.yarnY);
+			} else {
+				this.stackCards(cards,flex);
+			}
+			cards = []; flex = null;
+		}
 		if (c.lastSlot.bed === bsi.bed) {
 			var si = slotToIndex(s);
 			var ti = slotToIndex(t);
 			if (si < ti) {
-				if (c.lastCard) {
-					c.lastCard.setTo('right');
-					flex = c.lastCard;
-				}
+				c.lastCard.setTo('right');
+				flex = c.lastCard;
+
 				for (var idx = si + 1; idx <= ti; ++idx) {
 					var slot = indexToSlot(idx);
 					if (slot.nudge === '') {
@@ -1103,10 +1188,9 @@ RecordMachine.prototype.knit = function(d, n, cs) {
 					}
 				}
 			} else if (si > ti) {
-				if (c.lastCard) {
-					c.lastCard.setTo('left');
-					flex = c.lastCard;
-				}
+				c.lastCard.setTo('left');
+				flex = c.lastCard;
+
 				for (var idx = si - 1; idx >= ti; --idx) {
 					var slot = indexToSlot(idx);
 					if (slot.nudge === '') {
@@ -1128,13 +1212,24 @@ RecordMachine.prototype.knit = function(d, n, cs) {
 			//handle U-turn:
 			//(note: could probably detect and avoid stackCards when lastCard is 'from' the opposite of d)
 			this.stackCards(cards,flex); cards = []; flex = null;
-			if (c.lastCard) {
-				c.lastCard.setTo(d === '+' ? 'right' : 'left');
-				flex = c.lastCard;
-			}
+
+			c.lastCard.setTo(d === '+' ? 'right' : 'left');
+			flex = c.lastCard;
 		}
 	}, this);
+	return {cards:cards, flex:flex};
+};
 
+RecordMachine.prototype.knit = function(d, n, cs) {
+	var bsi = parseNeedle(n);
+	if (bsi.slider) throw "Can't knit on a slider.";
+
+	//Set up carriers:
+	var ret = this.moveCarriers(d, n, cs);
+	var cards = ret.cards;
+	var flex = ret.flex;
+
+	//gather list of yarns for makeKnitCard:
 	var yarns = [];
 	cs.forEach(function(cn){
 		var c = this.carriers[cn];
@@ -1229,43 +1324,50 @@ RecordMachine.prototype.knit = function(d, n, cs) {
 };
 RecordMachine.prototype.tuck = function(d, n, cs) {
 	var bsi = parseNeedle(n);
-	if (bsi.slider) throw "Can't knit on a slider.";
+	if (bsi.slider) throw "Can't tuck on a slider.";
 
-/*
-	//bring in carriers if needed:
-	this.bringInIfNeeded(d, n, cs);
+	//Set up carriers:
+	var ret = this.moveCarriers(d, n, cs);
+	var cards = ret.cards;
+	var flex = ret.flex;
 
-	//move carriers into position (TODO: make yarn overlaps)
-	this.moveCarriers(d, n, cs);
-
-	//Grab the card for this needle:
-	var needle = this.getNeedle(n);
-
-	//TODO: add a some 'tuck-like' yarn guides into the mix
-
-	//form new loop:
+	//gather list of yarns for makeKnitCard:
+	var yarns = [];
 	cs.forEach(function(cn){
 		var c = this.carriers[cn];
-		console.assert(c.yarn.tail.guide === c.guide, "yarn connected to carrier");
-		if (d === '+') {
-			c.yarn.insertGuide(c.yarn.tail, needle.loop, '+');
-		} else {
-			c.yarn.insertGuide(c.yarn.tail, needle.loop, '-');
+		yarns.push(c.yarn);
+	}, this);
+	
+	//Build a tuck card on the proper needle:
+	(function(){
+		var stack = this.getSlot(bsi.bed, bsi.index);
+		var loops = [];
+		if (stack.length !== 0) {
+			loops = stack[stack.length-1].outLoops;
 		}
-		console.assert(c.yarn.tail.guide === c.guide, "yarn still connected to carrier");
-	}, this);
+		var card = makeTuckCard(d, bsi.bed, yarns, loops);
+		cards.push([card, stack]);
+	}).call(this);
 
-	//move carriers to other side of stitch:
-	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? 0.5 : -0.5) + (bsi.bed === 'b' ? this.racking : 0.0));
-	cs.forEach(function(cn){
-		var c = this.carriers[cn];
-		console.assert(c.yarn.tail.guide === c.guide, "carrier should have yarn connected");
-		c.guide.points.forEach(function(p){ p.x = at; });
-	}, this);
+	//Build an output yarn card:
+	(function(){
+		if (cs.length === 0) return;
+		var card = makeYarnNudgeCard((d === '+' ? 'left' : 'right'), '*', yarns);
+		var stack = this.getSlot(bsi.bed, bsi.index, d);
+		cards.push([card, stack]);
 
-	*/
+		cs.forEach(function(cn){
+			var c = this.carriers[cn];
+			c.lastSlot = {bed:bsi.bed, index:bsi.index, nudge:d};
+			c.lastCard = card;
+		}, this);
+	}).call(this);
+
+	//Put the rest of the cards on stacks:
+	this.stackCards(cards,flex); cards = []; flex = null;
 
 };
+
 RecordMachine.prototype.split = function(d, n, n2, cs) {
 	var bsi = parseNeedle(n);
 	var bsi2 = parseNeedle(n2);
@@ -1273,6 +1375,8 @@ RecordMachine.prototype.split = function(d, n, n2, cs) {
 	if (bsi.slider && bsi2.slider) throw "Can't transfer slider-to-slider.";
 
 	if (cs.length === 0) {
+		//TODO: handle trapping yarn carriers against target bed.
+
 		// "simple" xfer:
 		var cards = [];
 		var slot = this.getSlot(bsi.bed + (bsi.slider ? 's' : ''), bsi.index);
@@ -1288,7 +1392,20 @@ RecordMachine.prototype.split = function(d, n, n2, cs) {
 			makeLoopCard(bsi2.bed + (bsi2.slider ? 's' : ''), (bsi2.bed === 'f' ? 'in' : 'out'), 'up', card.xferLoops, loops2),
 			slot2
 		]);
-		this.stackCards(cards);
+
+		var link = {};
+		if (bsi.bed === 'b' || bsi.bed === 'bs') {
+			console.assert(bsi2.bed === 'f' || bsi2.bed === 'fs', "xfer is back-to-front");
+			link.backIndex = slotToIndex({index:bsi.index, nudge:""});
+			link.frontIndex = slotToIndex({index:bsi2.index, nudge:""});
+		} else {
+			console.assert(bsi.bed === 'f' || bsi.bed === 'fs', "xfer is from valid bed");
+			console.assert(bsi2.bed === 'b' || bsi2.bed === 'bs', "xfer is front-to-back");
+			link.backIndex = slotToIndex({index:bsi2.index, nudge:""});
+			link.frontIndex = slotToIndex({index:bsi.index, nudge:""});
+		}
+		this.addLink(link);
+		link.yarnY = this.stackCards(cards, null, link.yarnY);
 	} else {
 		//must TODO!
 	}
@@ -1386,7 +1503,7 @@ RecordMachine.prototype.drawStacks = function() {
 	ctx.lineWidth = px;
 	ctx.setTransform( s,0, 0,-s, 0.5 * canvas.width - 0.5 * (maxX + minX) * s, 0.5 * canvas.height + 0.5 * (maxY + minY) * s );
 
-
+/*
 	//"old" drawing:
 	// (rely on draw functions that don't actually know about yarn)
 	["bs","b","fs","f"].forEach(function(layerName){
@@ -1414,7 +1531,7 @@ RecordMachine.prototype.drawStacks = function() {
 			});
 		}
 	}, this);
-
+*/
 	
 
 	//"new" drawing:
@@ -1426,8 +1543,14 @@ RecordMachine.prototype.drawStacks = function() {
 			"fs":{x:-0.025, y:0.025},
 			"f":{x:0.0, y:0.0}
 		}[layerName];
+		var tint = {
+			"b":"#fff",
+			"bs":"#bbf",
+			"fs":"#88f",
+			"f":""
+		}[layerName];
 
-		ofs.x = 0.0; ofs.y = 0.0; //DEBUG, check alignment with old drawing
+		//ofs.x = 0.0; ofs.y = 0.0; //DEBUG, check alignment with old drawing
 
 		var layer = this.layers[layerName];
 		for (var slotName in layer) {
@@ -1436,20 +1559,21 @@ RecordMachine.prototype.drawStacks = function() {
 			slot.forEach(function(card){
 				card.x = x + ofs.x;
 				card.y = card.top - 0.5 * card.height + ofs.y;
+				card.tint = tint;
 			});
 		}
 	}, this);
 	// sort yarn segments to cards:
 	this.yarns.forEach(function(yarn){
-		ctx.beginPath();
 		for (var pt = yarn.first; pt !== null; pt = pt.next) {
-			if (pt.next !== null && pt.next.card === pt.card) {
+			if (pt.next !== null) { // && pt.next.card === pt.card) {
+				ctx.beginPath();
 				ctx.moveTo(pt.card.x + pt.x, pt.card.y + pt.y);
 				ctx.lineTo(pt.next.card.x + pt.next.x, pt.next.card.y + pt.next.y);
+				ctx.strokeStyle = (pt.card.tint !== "" ? pt.card.tint : yarn.color);
+				ctx.stroke();
 			}
 		}
-		ctx.strokeStyle = "#000"; //DEBUG, was: yarn.color;
-		ctx.stroke();
 	});
 
 
