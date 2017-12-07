@@ -355,12 +355,15 @@ function Card() {
 	};
 }
 
-function makeKnitCard(direction, bed, yarns, loops) {
+const SPLIT_MODE = "SPLIT_MODE";
+
+function makeKnitCard(direction, bed, yarns, loops, splitMode) {
 	console.assert(direction === '+' || direction === '-', "Knit must happen in + or - direction");
 	console.assert(bed === 'f' || bed === 'b', "Knit must happen on front or back bed");
 	console.assert(Array.isArray(yarns) && Array.isArray(loops), "makeKnitCard must have [possibly empty] yarns and loops");
 	yarns.forEach(function(yarn){ console.assert(yarn instanceof Yarn, "Yarns array should contain yarns."); });
 	loops.forEach(function(loop){ console.assert(loop instanceof Loop, "Loops array should contain loops."); });
+	console.assert(typeof(splitMode) === 'undefined' || splitMode === SPLIT_MODE, "splitMode should be the SPLIT_MODE constant or nothing");
 
 	var card = new Card();
 	card.width = NEEDLE_WIDTH;
@@ -381,19 +384,35 @@ function makeKnitCard(direction, bed, yarns, loops) {
 	o.y *= 0.03 * NEEDLE_WIDTH;
 	var dy = d.y + o.y;
 
-	//add points to loops:
-	loops.forEach(function(loop){
-		//returned loop is ignored (loop is finished)
-		loop.addPoints(card, [
-			{x: -0.2 * card.width, y: -0.5 * card.height },
-			{x: -0.2 * card.width - d.x + o.x, y: d.y - o.y + dy },
-			{x: -0.2 * card.width - d.x - o.x, y: d.y + o.y + dy }
-		],[
-			{x: 0.2 * card.width, y: -0.5 * card.height },
-			{x: 0.2 * card.width + d.x - o.x, y: d.y - o.y + dy },
-			{x: 0.2 * card.width + d.x + o.x, y: d.y + o.y + dy }
-		]);
-	});
+	if (splitMode === SPLIT_MODE) {
+		card.xferLoops = []; //stored because split will grab 'em later
+		//add points to loops:
+		loops.forEach(function(loop){
+			card.xferLoops.push(loop.addPoints(card, [
+				{x: -0.2 * card.width, y: -0.5 * card.height },
+				{x: -0.2 * card.width - d.x + o.x, y: d.y - o.y + dy },
+				{x: -0.2 * card.width - d.x - o.x, y: d.y + o.y + dy }
+			],[
+				{x: 0.2 * card.width, y: -0.5 * card.height },
+				{x: 0.2 * card.width + d.x - o.x, y: d.y - o.y + dy },
+				{x: 0.2 * card.width + d.x + o.x, y: d.y + o.y + dy }
+			]));
+		});
+
+	} else {
+		//add points to loops:
+		loops.forEach(function(loop){
+			loop.addPoints(card, [
+				{x: -0.2 * card.width, y: -0.5 * card.height },
+				{x: -0.2 * card.width - d.x + o.x, y: d.y - o.y + dy },
+				{x: -0.2 * card.width - d.x - o.x, y: d.y + o.y + dy }
+			],[
+				{x: 0.2 * card.width, y: -0.5 * card.height },
+				{x: 0.2 * card.width + d.x - o.x, y: d.y - o.y + dy },
+				{x: 0.2 * card.width + d.x + o.x, y: d.y + o.y + dy }
+			]);
+		});
+	}
 
 	card.outLoops = [];
 	yarns.forEach(function(yarn){
@@ -1265,63 +1284,8 @@ RecordMachine.prototype.knit = function(d, n, cs) {
 	//Put the rest of the cards on stacks:
 	this.stackCards(cards,flex); cards = []; flex = null;
 
-	/*
-	//bring in carriers if needed:
-	this.bringInIfNeeded(d, n, cs);
-
-	//move carriers into position (TODO: make yarn overlaps)
-	this.moveCarriers(d, n, cs);
-
-	//Grab the card for this needle:
-	var needle = this.getNeedle(n);
-
-	//Figure out if needle beds need shoving:
-	if (needle.horizonY + 1.5 * LOOP_HEIGHT + LOOP_PADDING > this.needlesY) {
-		this.needlesY = needle.horizonY + 1.5 * LOOP_HEIGHT + LOOP_PADDING;
-		['b','bs','fs','f'].forEach(function(n){
-			this.needleBeds[n].y = this.needlesY;
-		}, this);
-		this.carrierBed.y = this.needlesY;
-	}
-	needle.horizonY = this.needlesY - 0.5 * LOOP_HEIGHT;
-
-	//make knit-shaped card:
-	var knit = makeKnitCard(this.beds[bsi.bed + (bsi.slider ? 's' : '')], bsi.index, needle.horizonY - 0.5 * LOOP_HEIGHT, (bsi.bed === 'f' ? 1.0 :-1.0));
-
-	//Re-route segments through knit's loop:
-	knit.loop.segments = needle.loop.segments;
-	needle.loop.segments = [];
-
-	//adjust pointers:
-	knit.loop.segments.forEach(function(segment){
-		segment.guide = knit.loop;
-	});
-
-	//form new loop:
-	cs.forEach(function(cn){
-		var c = this.carriers[cn];
-		console.assert(c.yarn.tail.guide === c.guide, "yarn connected to carrier");
-		if (d === '+') {
-			c.yarn.insertGuide(c.yarn.tail, knit.leftYarn, '+');
-			c.yarn.insertGuide(c.yarn.tail, needle.loop, '+');
-			c.yarn.insertGuide(c.yarn.tail, knit.rightYarn, '+');
-		} else {
-			c.yarn.insertGuide(c.yarn.tail, knit.rightYarn, '-');
-			c.yarn.insertGuide(c.yarn.tail, needle.loop, '-');
-			c.yarn.insertGuide(c.yarn.tail, knit.leftYarn, '-');
-		}
-		console.assert(c.yarn.tail.guide === c.guide, "yarn still connected to carrier");
-	}, this);
-
-	//move carriers to other side of stitch:
-	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? 0.5 : -0.5) + (bsi.bed === 'b' ? this.racking : 0.0));
-	cs.forEach(function(cn){
-		var c = this.carriers[cn];
-		console.assert(c.yarn.tail.guide === c.guide, "carrier should have yarn connected");
-		c.guide.points.forEach(function(p){ p.x = at; });
-	}, this);
-	*/
 };
+
 RecordMachine.prototype.tuck = function(d, n, cs) {
 	var bsi = parseNeedle(n);
 	if (bsi.slider) throw "Can't tuck on a slider.";
@@ -1358,7 +1322,7 @@ RecordMachine.prototype.tuck = function(d, n, cs) {
 
 		cs.forEach(function(cn){
 			var c = this.carriers[cn];
-			c.lastSlot = {bed:bsi.bed, index:bsi.index, nudge:d};
+			c.lastSlot = {bed:bsi.bed, index:bsi.index, nudge:d};60606060606060
 			c.lastCard = card;
 		}, this);
 	}).call(this);
@@ -1374,22 +1338,72 @@ RecordMachine.prototype.split = function(d, n, n2, cs) {
 	if (bsi.slider && cs.length) throw "Can't split from a slider.";
 	if (bsi.slider && bsi2.slider) throw "Can't transfer slider-to-slider.";
 
-	if (cs.length === 0) {
-		//TODO: handle trapping yarn carriers against target bed.
+	var cards = [];
+	var flex = null;
 
-		// "simple" xfer:
-		var cards = [];
+	var fromCard;
+
+	if (cs.length !== 0) {
+		//build a knit card to xfer from:
+
+		//Set up carriers:
+		var ret = this.moveCarriers(d, n, cs);
+		cards = ret.cards;
+		flex = ret.flex;
+
+		//gather list of yarns for makeKnitCard:
+		var yarns = [];
+		cs.forEach(function(cn){
+			var c = this.carriers[cn];
+			yarns.push(c.yarn);
+		}, this);
+	
+		//Build a knit card on the proper needle:
+		(function(){
+			var stack = this.getSlot(bsi.bed, bsi.index);
+			var loops = [];
+			if (stack.length !== 0) {
+				loops = stack[stack.length-1].outLoops;
+				}
+			var card = makeKnitCard(d, bsi.bed, yarns, loops, SPLIT_MODE);
+			fromCard = card;
+			cards.push([card, stack]);
+		}).call(this);
+
+		//Build an output yarn card:
+		(function(){
+			if (cs.length === 0) return;
+			var card = makeYarnNudgeCard((d === '+' ? 'left' : 'right'), '*', yarns);
+			var stack = this.getSlot(bsi.bed, bsi.index, d);
+			cards.push([card, stack]);
+
+			cs.forEach(function(cn){
+				var c = this.carriers[cn];
+				c.lastSlot = {bed:bsi.bed, index:bsi.index, nudge:d};
+				c.lastCard = card;
+			}, this);
+		}).call(this);
+	} else {
 		var slot = this.getSlot(bsi.bed + (bsi.slider ? 's' : ''), bsi.index);
+		//make a loops card to xfer from:
 		var loops = (slot.length === 0 ? [] : slot[slot.length-1].outLoops);
-		var card = makeLoopCard(bsi.bed + (bsi.slider ? 's' : ''), 'down', (bsi.bed === 'f' ? 'in' : 'out'), loops);
+		fromCard = makeLoopCard(bsi.bed + (bsi.slider ? 's' : ''), 'down', (bsi.bed === 'f' ? 'in' : 'out'), loops);
 		cards.push([
-			card,
+			fromCard,
 			slot
 		]);
+	}
+
+
+	(function(){
+		//TODO: handle trapping yarn carriers against target bed.
+
+		// destination card:
 		var slot2 = this.getSlot(bsi2.bed + (bsi2.slider ? 's' : ''), bsi2.index);
 		var loops2 = (slot2.length === 0 ? [] : slot2[slot2.length-1].outLoops);
+
 		cards.push([
-			makeLoopCard(bsi2.bed + (bsi2.slider ? 's' : ''), (bsi2.bed === 'f' ? 'in' : 'out'), 'up', card.xferLoops, loops2),
+			makeLoopCard(bsi2.bed + (bsi2.slider ? 's' : ''), (bsi2.bed === 'f' ? 'in' : 'out'), 'up', fromCard.xferLoops, loops2),
 			slot2
 		]);
 
@@ -1406,9 +1420,10 @@ RecordMachine.prototype.split = function(d, n, n2, cs) {
 		}
 		this.addLink(link);
 		link.yarnY = this.stackCards(cards, null, link.yarnY);
-	} else {
-		//must TODO!
-	}
+		cards = []; flex = null;
+	}).call(this);
+
+	//this.stackCards(cards, flex); cards = []; flex = null;
 
 /*
 	//bring in carriers if needed:
