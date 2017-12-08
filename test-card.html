@@ -11,12 +11,35 @@ code.knitout {
 	background:#eee;
 	border-radius:5px;
 }
+#dropTarget {
+	position:fixed;
+	left:0;
+	bottom:0;
+	width:100%;
+	height:100%;
+
+	background:#ccc;
+	outline:4px dashed #eee;
+	outline-offset:-20px;
+	z-index:100;
+	visibility:hidden;
+}
+#dropTarget.active {
+	visibility:visible;
+	background:#eee;
+	outline-color:#ccc;
+}
+
 </style>
 <body>
+<p>
+Drop a ".k" file into the window to visualize it.
+</p>
 
 <p>Here's some example knitout code:</p>
 
-<pre><code class="knitout">;!knitout-2
+<div id="viz"></div>
+<pre><code id="code" class="knitout">;!knitout-2
 ;;Machine: SWG091N2
 ;;Gauge: 15
 ;;Carriers: 1 2 3 4 5 6 7 8 9 10
@@ -300,6 +323,92 @@ outhook 5
 </code></pre>
 
 <p>That was the knitout code.</p>
+
+<div id="dropTarget"></div>
+
 <script src="knitout-visualizer-card.js"></script>
+
+<script>
+
+var code = document.getElementById('code');
+var viz = document.getElementById('viz');
+viz = replaceElement(viz, code.innerText);
+
+
+function readFile(file) {
+	console.log("Attempting to read file: '" + file.name + "'");
+
+	var oldSize = 0;
+	var oldCheck = 0;
+
+	function pollFile() {
+		//generate new data:
+		var reader = new FileReader();
+		reader.onload = function(){
+			code.innerText = reader.result;
+			viz = replaceElement(viz, code.innerText);
+		/*
+			var newSize = reader.result.length;
+			var newCheck = 0;
+			var arr = new Uint8Array(reader.result);
+			for (var i = 0; i < arr.length; ++i) {
+				newCheck = (newCheck << 7) ^ (newCheck >> 25) ^ arr[i];
+			}
+
+			if (newSize !== oldSize || newCheck !== oldCheck) {
+				oldSize = newSize;
+				oldCheck = newCheck;
+
+				console.log("Updated file '" + file.name + "'");
+				let fileRaster = parseDat(reader.result);
+				fileRaster.name = file.name;
+				setRaster(fileRaster);
+			} else {
+				console.log("Didn't update file '" + file.name + "' -- size and checksum matched.");
+			}
+			*/
+
+			//poll again:
+			//pollTimeout = window.setTimeout(pollFile, 5000);
+		};
+		reader.readAsText(file);
+	}
+
+	//window.clearTimeout(pollTimeout);
+	pollTimeout = null;
+	pollFile();
+
+}
+
+var dropTarget = document.getElementById("dropTarget");
+//dragging into the window also loads files:
+dropTarget.addEventListener('dragover', function(evt){
+	dropTarget.classList.add("active");
+	evt.preventDefault();
+	return false;
+});
+dropTarget.addEventListener('dragleave', function(evt){
+	dropTarget.classList.remove("active");
+	evt.preventDefault();
+	return false;
+});
+dropTarget.addEventListener('drop', function(evt){
+	dropTarget.classList.remove("active");
+	try {
+		readFile(evt.dataTransfer.files[0]);
+	} catch (e) {
+		console.log(e);
+	}
+	evt.preventDefault();
+	return false;
+});
+
+//dragging into the window shows the target:
+document.addEventListener('dragover', function(evt){
+	dropTarget.classList.add("active");
+	evt.preventDefault();
+	return false;
+});
+</script>
 
 </body>

@@ -907,125 +907,13 @@ function parseSlot(slotName) {
 	};
 }
 
-/*
-RecordMachine.prototype.markIn = function(cs, hook) {
-	//check parameters:
-	cs.forEach(function(cn){
-		if (!(cn in this.carriers)) throw "Carrier name [" + cn + "] not in carrier list.";
-		var c = this.carriers[cn];
-		if (c.yarn) throw "Carrier [" + cn + "] is already in action.";
-		if (c.mark) throw "Carrier [" + cn + "] is already marked to come in.";
-	}, this);
-	//mark carriers:
-	var mark = {
-		cs:cs.slice(),
-		hook:hook
-	};
-	cs.forEach(function(cn){
-		this.carriers[cn].mark = mark;
-	}, this);
-};
+//These all do, well, nothing:
+RecordMachine.prototype.in = function(cs) { };
+RecordMachine.prototype.inhook = function(cs) { };
 
-RecordMachine.prototype.bringInIfNeeded = function(d, n, cs) {
-	//if any carrier hasn't made a stitch, then need to bring them (all) in:
-	var needIn = false;
-	cs.forEach(function(cn){
-		if (!(cn in this.carriers)) throw "Carrier name [" + cn + "] not in carrier list.";
-		var c = this.carriers[cn];
-		if (!c.yarn) needIn = true;
-	}, this);
-	if (!needIn) return;
-
-	//check that cs is marked for in, and that mark *matches*:
-	var mark = null;
-	cs.forEach(function(cn){
-		if (!(cn in this.carriers)) throw "Carrier name [" + cn + "] not in carrier list.";
-		var c = this.carriers[cn];
-		if (!c.mark) throw "Carrier [" + cn + "] is not marked to come in.";
-		if (mark === null) mark = c.mark;
-		if (JSON.stringify(c.mark.cs) !== JSON.stringify(cs)) throw "Carrier [" + cn + "] is not marked to come in as part of carrier set " + JSON.stringify(cs) + ".";
-		console.assert(mark === c.mark, "marks on the same carrier set should always match");
-	}, this);
-
-	//'at' is where the hook parks (and where the carriers begin):
-	// (that is, just before 'n' in direction 'd')
-	var bsi = parseNeedle(n);
-	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? -0.5 : 0.5) + (bsi.bed === 'b' ? this.racking : 0.0) );
-
-	//move carriers, create yarn, remove mark:
-	cs.forEach(function(cn){
-		var c = this.carriers[cn];
-		c.guide.points.forEach(function(p){ p.x = at; });
-
-		delete c.mark;
-
-		var yarn = new Yarn();
-		yarn.insertGuide(null, c.guide, '+');
-		c.yarn = yarn;
-		this.yarns.push(yarn);
-	}, this);
-
-	//create a new holding hook, if needed:
-	if (mark.hook) {
-		var hook = {
-			at:at,
-			cs:cs.slice()
-		};
-		cs.forEach(function(cn){
-			this.carriers[cn].hook = hook;
-		}, this);
-	}
-}
-
-RecordMachine.prototype.bringOut = function(cs, hook) {
-	//check that all carriers are actually in, are not in a hook, and have knit something:
-	cs.forEach(function(cn){
-		if (!(cn in this.carriers)) throw "Carrier name [" + cn + "] not in carrier list.";
-		var c = this.carriers[cn];
-		if (!c.last) throw "Carrier [" + cn + "] is not in action.";
-		if (c.hook) throw "Carrier [" + cn + "] is in a holding hook.";
-		if (c.mark) throw "Carrier [" + cn + "] is marked to come in.";
-	}, this);
-	//TODO: sanity check that when using hook there's a reasonable place to park it?
-
-	//take carriers out:
-	cs.forEach(function(cn){
-		var c = this.carriers[cn];
-
-		c.guide.points.forEach(function(p){ p.x = Infinity; });
-
-		console.assert(c.yarn.tail === c.guide, "yarn still attached.");
-		c.yarn.eraseSegment(c.yarn.tail);
-
-		//TODO: disconnect from yarn
-	}, this);
-};*/
-
-RecordMachine.prototype.in = function(cs) { /*this.markIn(cs, false);*/ };
-RecordMachine.prototype.inhook = function(cs) { /*this.markIn(cs, true);*/ };
-
-RecordMachine.prototype.releasehook = function(cs) {
-/*
-	//check that all of 'cs' is held in the same hook:
-	var hook = null;
-	cs.forEach(function(cn){
-		if (!(cn in this.carriers)) throw "Carrier name [" + cn + "] not in carrier list.";
-		var c = this.carriers[cn];
-		if (!c.hook) throw "Carrier [" + cn + "] is not in a hook.";
-		if (hook === null) hook = c.hook;
-		if (JSON.stringify(c.hook.cs) !== JSON.stringify(cs)) throw "Carrier [" + cn + "] is not in a hook with carrier set " + JSON.stringify(cs) + ".";
-		console.assert(hook === c.hook, "hooks on the same carrier set should always match");
-	}, this);
-
-	//remove from hook:
-	cs.forEach(function(cn){
-		var c = this.carriers[cn];
-		delete c.hook;
-	}, this);
-*/
-};
-RecordMachine.prototype.out = function(cs) { /* this.bringOut(cs, false); */ }
-RecordMachine.prototype.outhook = function(cs) { /* this.bringOut(cs, true); */ }
+RecordMachine.prototype.releasehook = function(cs) { };
+RecordMachine.prototype.out = function(cs) { }
+RecordMachine.prototype.outhook = function(cs) { }
 
 RecordMachine.prototype.stitch = function(l, t) {
 	this.stitchValues = {l:l, t:t};
@@ -1033,18 +921,6 @@ RecordMachine.prototype.stitch = function(l, t) {
 RecordMachine.prototype.rack = function(r) {
 	this.racking = r;
 };
-
-/*
-RecordMachine.prototype.moveCarriers = function(d, n, cs) {
-	var bsi = parseNeedle(n);
-	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? -0.5 : 0.5) + (bsi.bed === 'b' ? this.racking : 0.0));
-	cs.forEach(function(cn){
-		var c = this.carriers[cn];
-		console.assert(c.yarn.tail.guide === c.guide, "carrier should have yarn connected");
-		c.guide.points.forEach(function(p){ p.x = at; });
-	}, this);
-};
-*/
 
 //helper that adds a link between a given frontIndex and backIndex and makes sure it clears any link that it crosses by at least NUDGE_WIDTH:
 RecordMachine.prototype.addLink = function(link) {
@@ -1099,14 +975,14 @@ function slotToIndex(s) {
 	if (s.nudge !== '') si += (s.nudge === '+' ? 1 : -1);
 
 	var test = indexToSlot(si);
-	console.assert(test.index === s.index && test.nudge === s.nudge, "slotToIndexToSlot should be okay");
+	console.assert(test.index === s.index && test.nudge === s.nudge, "slotToIndexToSlot should be okay on ",s);
 
 	return si;
 }
 function indexToSlot(idx) {
 	return {
 		index:Math.floor(idx / 3),
-		nudge:['-','','+'][idx % 3]
+		nudge:['-','','+'][((idx % 3) + 3) % 3]
 	};
 }
 
@@ -1423,41 +1299,6 @@ RecordMachine.prototype.split = function(d, n, n2, cs) {
 		cards = []; flex = null;
 	}).call(this);
 
-	//this.stackCards(cards, flex); cards = []; flex = null;
-
-/*
-	//bring in carriers if needed:
-	this.bringInIfNeeded(d, n, cs);
-
-	//move carriers into position (TODO: make yarn overlaps)
-	this.moveCarriers(d, n, cs);
-
-	//Grab the card for this needle:
-	var needle = this.getNeedle(n);
-
-	//TODO: add a some 'tuck-like' yarn guides into the mix
-
-	//form new loop:
-	cs.forEach(function(cn){
-		var c = this.carriers[cn];
-		console.assert(c.yarn.tail.guide === c.guide, "yarn connected to carrier");
-		if (d === '+') {
-			c.yarn.insertGuide(c.yarn.tail, needle.loop, '+');
-		} else {
-			c.yarn.insertGuide(c.yarn.tail, needle.loop, '-');
-		}
-		console.assert(c.yarn.tail.guide === c.guide, "yarn still connected to carrier");
-	}, this);
-
-	//move carriers to other side of stitch:
-	var at = NEEDLE_SPACING * (bsi.index + (d === '+' ? 0.5 : -0.5) + (bsi.bed === 'b' ? this.racking : 0.0));
-	cs.forEach(function(cn){
-		var c = this.carriers[cn];
-		console.assert(c.yarn.tail.guide === c.guide, "carrier should have yarn connected");
-		c.guide.points.forEach(function(p){ p.x = at; });
-	}, this);
-
-	*/
 };
 
 RecordMachine.prototype.miss = function(d, n, cs) {
@@ -1614,8 +1455,8 @@ function replaceElement(toReplace, codeText) {
 
 	container.appendChild(picture);
 
-
 	toReplace.replaceWith(container);
+	return container;
 }
 
 //find blocks of <pre><code class="knitout"> ... </code></pre>, and pass to replaceElement:
@@ -1641,7 +1482,7 @@ function init() {
 
 }
 
-init();
+//init();
 
 
 /*})(); */
