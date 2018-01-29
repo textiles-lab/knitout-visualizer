@@ -343,37 +343,22 @@ function readFile(file) {
 		//generate new data:
 		var reader = new FileReader();
 		reader.onload = function(){
-			code.innerText = reader.result;
-			viz = replaceElement(viz, code.innerText);
-		/*
-			var newSize = reader.result.length;
-			var newCheck = 0;
-			var arr = new Uint8Array(reader.result);
-			for (var i = 0; i < arr.length; ++i) {
-				newCheck = (newCheck << 7) ^ (newCheck >> 25) ^ arr[i];
+			if (reader.result != code.innerText) {
+				code.innerText = reader.result;
+				viz = replaceElement(viz, code.innerText);
 			}
-
-			if (newSize !== oldSize || newCheck !== oldCheck) {
-				oldSize = newSize;
-				oldCheck = newCheck;
-
-				console.log("Updated file '" + file.name + "'");
-				let fileRaster = parseDat(reader.result);
-				fileRaster.name = file.name;
-				setRaster(fileRaster);
-			} else {
-				console.log("Didn't update file '" + file.name + "' -- size and checksum matched.");
-			}
-			*/
 
 			//poll again:
-			//pollTimeout = window.setTimeout(pollFile, 5000);
+			readFile.pollTimeout = window.setTimeout(pollFile, 5000);
 		};
+		console.log("polling " + file.name);
 		reader.readAsText(file);
 	}
 
-	//window.clearTimeout(pollTimeout);
-	pollTimeout = null;
+	if ('pollTimeout' in readFile) {
+		window.clearTimeout(readFile.pollTimeout);
+		delete readFile.pollTimeout;
+	}
 	pollFile();
 
 }
