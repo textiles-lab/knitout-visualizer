@@ -22,8 +22,6 @@ const NEEDLE_WIDTH = 4;
 const LOOP_WIDTH = NEEDLE_WIDTH + 2 * LOOP_HEIGHT;
 const PINCH_WIDTH = NEEDLE_WIDTH + 2 * PINCH_HEIGHT;
 
-const SCALE = 4.0;
-
 //types of things on needles:
 const TYPE_BASE  = {name:'base',  height:0.0, width:NEEDLE_WIDTH};
 const TYPE_HOOK  = {name:'hook',  height:HOOK_HEIGHT, width:NEEDLE_WIDTH};
@@ -267,10 +265,23 @@ function parseBedNeedle(str) {
 };
 
 function TransferVisualizer(div) {
+	window.XV = this; //DEBUG
+
 	this.div = div;
 
-	var minNeedle = 0;
-	var maxNeedle = 4;
+	var minNeedle = div.getAttribute("data-minNeedle");
+	if (minNeedle === null) {
+		minNeedle = 0;
+	} else {
+		minNeedle = parseInt(minNeedle);
+	}
+
+	var maxNeedle = div.getAttribute("data-maxNeedle");
+	if (maxNeedle === null) {
+		maxNeedle = 5;
+	} else {
+		maxNeedle = parseInt(maxNeedle);
+	}
 
 	var maxRacking = div.getAttribute("data-maxRacking");
 	if (maxRacking === null) {
@@ -286,13 +297,38 @@ function TransferVisualizer(div) {
 
 	var canvas = document.createElement("canvas");
 
-	canvas.width = SCALE * (maxNeedle - minNeedle + 1 + maxRacking) * NEEDLE_SPACING;
-	canvas.height = SCALE * (NEEDLE_HEIGHT + BED_GAP_HEIGHT + NEEDLE_HEIGHT);
-	div.appendChild(canvas);
+	let minWidth = (maxNeedle - minNeedle + 1 + maxRacking) * NEEDLE_SPACING;
+	let minHeight = (NEEDLE_HEIGHT + BED_GAP_HEIGHT + NEEDLE_HEIGHT);
 
+	this.baseWidth = minWidth;
+	this.baseHeight = minHeight;
+	this.scale = 1.0;
+
+	canvas.style.position = "absolute";
+	//these will be adjusted by "resizeCanvas" later:
+	canvas.style.left = "0";
+	canvas.style.top = "0";
+	canvas.style.width = "100%";
+	canvas.style.height = "100%";
+
+	//create an aspect-ratio container for the canvas:
+	let container = document.createElement("div");
+	container.style.minWidth = minWidth + "px";
+	container.style.width = "100%";
+	container.style.height = "0";
+	container.style.paddingTop = ((minHeight / minWidth) * 100.0) + "%";
+	//container.style.background = "brown";
+	container.style.position = "relative";
+	container.style.overflow = "visible";
+
+	container.appendChild(canvas);
+	div.appendChild(container);
 
 	this.canvas = canvas;
 	this.ctx = canvas.getContext('2d');
+
+	//'requestDraw' will trigger 'resizeCanvas':
+	window.addEventListener('resize', function(){ me.requestDraw(); });
 
 	this.minNeedle = minNeedle;
 	this.maxNeedle = maxNeedle;
@@ -402,9 +438,19 @@ function TransferVisualizer(div) {
 
 		return false;
 	});
-
-	window.XV = this; //DEBUG
 }
+
+TransferVisualizer.prototype.resizeCanvas = function() {
+	let par = this.canvas.parentElement;
+	let maxWidth = par.clientWidth;
+	let maxHeight = par.clientHeight;
+	let scale = Math.max(1.0, Math.min(maxWidth / this.baseWidth, maxHeight / this.baseHeight));
+	this.scale = scale;
+	this.canvas.width = Math.round(this.baseWidth * scale);
+	this.canvas.height = Math.round(this.baseHeight * scale);
+	this.canvas.style.width = this.canvas.width + "px";
+	this.canvas.style.height = this.canvas.height + "px";
+};
 
 TransferVisualizer.prototype.error = function(message) {
 	if (this.hasError) return;
@@ -555,6 +601,8 @@ TransferVisualizer.prototype.requestDraw = function() {
 TransferVisualizer.prototype.draw = function() {
 	if (this.hasError) return; //don't draw over error condition
 
+	this.resizeCanvas();
+
 	const ctx = this.ctx;
 	const canvas = this.canvas;
 
@@ -563,10 +611,10 @@ TransferVisualizer.prototype.draw = function() {
 	ctx.fillStyle = '#eee';
 	ctx.fillRect(0,0,canvas.width,canvas.height);
 
-	ctx.width = canvas.width / SCALE;
-	ctx.height = canvas.height / SCALE;
+	ctx.width = canvas.width / this.scale;
+	ctx.height = canvas.height / this.scale;
 
-	ctx.setTransform(SCALE,0, 0,SCALE, 0,0);
+	ctx.setTransform(this.scale,0, 0,this.scale, 0,0);
 
 	const backLeft = 0.5 * ctx.width
 		- 0.5 * NEEDLE_SPACING * (this.maxNeedle + this.minNeedle)
