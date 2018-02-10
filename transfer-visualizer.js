@@ -300,6 +300,7 @@ function TransferVisualizer(div) {
 
 	this.frontNeedles = [];
 	this.backNeedles = [];
+	this.slacks = [];
 	this.links = [];
 
 	for (var n = minNeedle; n <= maxNeedle; ++n) {
@@ -327,7 +328,15 @@ function TransferVisualizer(div) {
 		}
 		if (i > 0) {
 			//create link:
-			this.links.push(new TVLink(prevLoop.right, loop.left, parseInt(startTokens[i+1])));
+			let slack = parseInt(startTokens[i+1]);
+			if (slack === slack) {
+				slack = {length:slack};
+				this.slacks.push(slack);
+			} else {
+				slack = null;
+			}
+
+			this.links.push(new TVLink(prevLoop.right, loop.left, slack));
 		}
 		prevLoop = loop;
 	}
@@ -411,8 +420,14 @@ TransferVisualizer.prototype.saveState = function(label) {
 		front:[],
 		back:[],
 		links:[],
+		slacks:[],
 		racking:this.racking
 	};
+
+	this.slacks.forEach(function(s, si){
+		state.slacks.push(s.length.toString());
+		s.ref = si.toString();
+	});
 
 	//each needle is recorded as '|o|oo<o|'
 	function recordNeedle(bed, target, n, ni){
@@ -439,7 +454,7 @@ TransferVisualizer.prototype.saveState = function(label) {
 	this.links.forEach(function(l){
 		let desc = '';
 		desc += l.a.item.ref + '.' + (l.a.item.left === l.a ? 'l' : 'r');
-		desc += ' ' + (l.slack === l.slack ? l.slack : '*') + ' ';
+		desc += ' ' + (l.slack === null ? '*' : l.slack.ref) + ' ';
 		desc += l.b.item.ref + '.' + (l.b.item.left === l.b ? 'l' : 'r');
 		state.links.push(desc);
 	});
@@ -448,6 +463,9 @@ TransferVisualizer.prototype.saveState = function(label) {
 };
 
 TransferVisualizer.prototype.loadState = function(state) {
+	//clear all slacks:
+	this.slacks.splice(0);
+
 	//clear all links:
 	this.links.forEach(function(link) { link.remove(); });
 	this.links.splice(0); //remove all elements
@@ -469,6 +487,11 @@ TransferVisualizer.prototype.loadState = function(state) {
 			n.hook.stackNext.remove();
 		}
 	});
+
+	//make new slacks:
+	state.slacks.forEach(function(s) {
+		this.slacks.push({length:parseInt(s)});
+	}, this);
 
 	let refToItem = {};
 
@@ -502,6 +525,9 @@ TransferVisualizer.prototype.loadState = function(state) {
 		let refA = m[1];
 		let sideA = m[2];
 		let slack = parseInt(m[3]);
+		if (slack === slack) slack = this.slacks[slack];
+		else slack = null;
+
 		let refB = m[4];
 		let sideB = m[5];
 		console.assert(refA in refToItem, "ref should exist");
@@ -554,6 +580,15 @@ TransferVisualizer.prototype.draw = function() {
 		this.frontNeedles[n-this.minNeedle].layout(frontLeft + n * NEEDLE_SPACING - 0.5*NEEDLE_WIDTH, ctx.height, -1);
 		this.backNeedles[n-this.minNeedle].layout(backLeft + n * NEEDLE_SPACING - 0.5*NEEDLE_WIDTH, 0, 1);
 	}
+
+	//compute slack lengths:
+	this.slacks.forEach(function(s){ s.current = 0; });
+	this.links.forEach(function(l){
+		if (l.slack) {
+			l.slack.current += Math.abs(l.a.item.centerX - l.b.item.centerX);
+		}
+	});
+	this.slacks.forEach(function(s){ s.current /= NEEDLE_SPACING; });
 
 	//draw links:
 	ctx.beginPath();
