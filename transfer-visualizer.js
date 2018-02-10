@@ -20,13 +20,16 @@ const GAP_HEIGHT = 1; //space between loop/loop, loop/pinch, etc...
 const NEEDLE_SPACING = 18; //between centers
 const NEEDLE_WIDTH = 4;
 const LOOP_WIDTH = NEEDLE_WIDTH + 2 * LOOP_HEIGHT;
+const PINCH_WIDTH = NEEDLE_WIDTH + 2 * PINCH_HEIGHT;
+
+const SCALE = 4.0;
 
 //types of things on needles:
-const TYPE_BASE  = {name:'base',  height:0.0};
-const TYPE_HOOK  = {name:'hook',  height:HOOK_HEIGHT};
-const TYPE_TIP   = {name:'tip',   height:TIP_HEIGHT};
-const TYPE_LOOP  = {name:'loop',  height:LOOP_HEIGHT};
-const TYPE_PINCH = {name:'pinch', height:PINCH_HEIGHT};
+const TYPE_BASE  = {name:'base',  height:0.0, width:NEEDLE_WIDTH};
+const TYPE_HOOK  = {name:'hook',  height:HOOK_HEIGHT, width:NEEDLE_WIDTH};
+const TYPE_TIP   = {name:'tip',   height:TIP_HEIGHT, width:NEEDLE_WIDTH};
+const TYPE_LOOP  = {name:'loop',  height:LOOP_HEIGHT, width:LOOP_WIDTH};
+const TYPE_PINCH = {name:'pinch', height:PINCH_HEIGHT, width:PINCH_WIDTH};
 
 //StackItem is something held in a stack on a needle; handled as a doubly-linked list:
 
@@ -84,8 +87,8 @@ TVLink.prototype.remove = function() {
 
 TVLink.prototype.addPath = function(ctx) {
 	//TODO: deal with path routing? / layout?
-	ctx.moveTo(this.a.item.centerX + this.a.side * NEEDLE_WIDTH * 0.5, this.a.item.centerY);
-	ctx.lineTo(this.b.item.centerX + this.b.side * NEEDLE_WIDTH * 0.5, this.b.item.centerY);
+	ctx.moveTo(this.a.item.centerX + this.a.side * this.a.item.type.width * 0.5, this.a.item.centerY);
+	ctx.lineTo(this.b.item.centerX + this.b.side * this.b.item.type.width * 0.5, this.b.item.centerY);
 };
 
 
@@ -220,7 +223,8 @@ TVNeedle.prototype.draw = function(ctx) {
 	//pinches go under needle:
 	for (var obj = this.base.stackNext; obj !== this.tip; obj = obj.stackNext) {
 		if (obj.type === TYPE_PINCH) {
-			//draw pinch!
+			ctx.fillStyle = (obj.mark ? '#ed0' : '#e11');
+			ctx.fillRect(obj.centerX - 0.5 * PINCH_WIDTH, obj.centerY - 0.5 * PINCH_HEIGHT, PINCH_WIDTH, PINCH_HEIGHT);
 		}
 	}
 
@@ -240,7 +244,7 @@ TVNeedle.prototype.draw = function(ctx) {
 		} else if (obj.type === TYPE_HOOK) {
 			//TODO: draw... something?
 		} else if (obj.type === TYPE_LOOP) {
-			ctx.fillStyle = '#f22';
+			ctx.fillStyle = (obj.mark ? '#fe0' : '#f22');
 			ctx.fillRect(obj.centerX - 0.5 * LOOP_WIDTH, obj.centerY - 0.5 * LOOP_HEIGHT, LOOP_WIDTH, LOOP_HEIGHT);
 		} else if (obj.type === TYPE_PINCH) {
 			//drawn earlier
@@ -282,8 +286,8 @@ function TransferVisualizer(div) {
 
 	var canvas = document.createElement("canvas");
 
-	canvas.width = (maxNeedle - minNeedle + 1 + maxRacking) * NEEDLE_SPACING;
-	canvas.height = NEEDLE_HEIGHT + BED_GAP_HEIGHT + NEEDLE_HEIGHT;
+	canvas.width = SCALE * (maxNeedle - minNeedle + 1 + maxRacking) * NEEDLE_SPACING;
+	canvas.height = SCALE * (NEEDLE_HEIGHT + BED_GAP_HEIGHT + NEEDLE_HEIGHT);
 	div.appendChild(canvas);
 
 
@@ -341,18 +345,18 @@ function TransferVisualizer(div) {
 		if (typeof(label) === 'undefined') label = "";
 		else label = label.substr(0, label.length-1);
 		let ops = m[2];
-		console.log("Label: '" + label + "'" + " ops: '" + ops + "'");
+		//console.log("Label: '" + label + "'" + " ops: '" + ops + "'");
 		if (ops === "") {
 			if (label !== "") console.warn("Empty ops with non-empty label");
 			return;
 		}
+		this.clearMarks();
 		let toks = ops.split(/\s+/);
 		while (toks.length > 0) {
 			if (toks.length < 2) {
 				console.warn("Ignoring trailing token in ops.");
 				break;
 			}
-			console.log(toks[0], toks[1]);
 			let from = parseBedNeedle(toks[0]);
 			let to = parseBedNeedle(toks[1]);
 			toks.splice(0,2);
@@ -362,7 +366,6 @@ function TransferVisualizer(div) {
 				this.xfer(from, to); //execute transfer
 			}
 			if (toks.length > 0) {
-				console.log(toks);
 				let comma = toks.splice(0,1)[0];
 				if (comma !== ',') {
 					console.warn("Expected comma between xfers in single group, got '" + comma + "'");
@@ -372,8 +375,8 @@ function TransferVisualizer(div) {
 		this.states.push(this.saveState(label));
 	}, this);
 
-	this.currentStep = 0;
-	this.loadState(this.states[this.currentStep]);
+	this.currentStep = this.states.length-1;
+	//this.loadState(this.states[this.currentStep]);
 
 	this.requestDraw();
 
@@ -417,7 +420,11 @@ TransferVisualizer.prototype.saveState = function(label) {
 		let idx = 0;
 		for (let item = n.base.stackNext; item !== n.tip; item = item.stackNext) {
 			if (item.type === TYPE_LOOP || item.type === TYPE_PINCH) {
-				desc += (item.type === TYPE_LOOP ? 'o' : '|') ;
+				if (item.mark) {
+					desc += (item.type === TYPE_LOOP ? 'O' : 'I') ;
+				} else {
+					desc += (item.type === TYPE_LOOP ? 'o' : 'i') ;
+				}
 				item.ref = bed + (ni + this.minNeedle) + '.' + (idx++);
 			} else if (item.type === TYPE_HOOK) {
 				desc += '<';
@@ -471,12 +478,16 @@ TransferVisualizer.prototype.loadState = function(state) {
 		let idx = 0;
 		let on = 'hook';
 		for (let i = 0; i < desc.length; ++i) {
-			if (desc[i] === 'o') {
-				refToItem[bed + (ni + this.minNeedle) + '.' + (idx++)] = n.makeLoop(on);
-			} else if (desc[i] === '|') {
-				refToItem[bed + (ni + this.minNeedle) + '.' + (idx++)] = n.makePinch(on);
-			} else if (desc[i] === 'v') {
+			if (desc[i] === 'o' || desc[i] === 'O') {
+				let item = refToItem[bed + (ni + this.minNeedle) + '.' + (idx++)] = n.makeLoop(on);
+				if (desc[i] === 'O') item.mark = true;
+			} else if (desc[i] === 'i' || desc[i] === 'I') {
+				let item = refToItem[bed + (ni + this.minNeedle) + '.' + (idx++)] = n.makePinch(on);
+				if (desc[i] === 'I') item.mark = true;
+			} else if (desc[i] === '<') {
 				on = 'slider';
+			} else {
+				console.error("Unrecognized needle character '" + desc[i] + "'.");
 			}
 		}
 	}
@@ -521,29 +532,37 @@ TransferVisualizer.prototype.draw = function() {
 	const ctx = this.ctx;
 	const canvas = this.canvas;
 
+
 	ctx.resetTransform();
 	ctx.fillStyle = '#eee';
 	ctx.fillRect(0,0,canvas.width,canvas.height);
 
-	const backLeft = 0.5 * canvas.width
+	ctx.width = canvas.width / SCALE;
+	ctx.height = canvas.height / SCALE;
+
+	ctx.setTransform(SCALE,0, 0,SCALE, 0,0);
+
+	const backLeft = 0.5 * ctx.width
 		- 0.5 * NEEDLE_SPACING * (this.maxNeedle + this.minNeedle)
 		+ this.racking * 0.5 * NEEDLE_SPACING;
-	const frontLeft = 0.5 * canvas.width
+	const frontLeft = 0.5 * ctx.width
 		- 0.5 * NEEDLE_SPACING * (this.maxNeedle + this.minNeedle)
 		- this.racking * 0.5 * NEEDLE_SPACING;
 
 	//layout all needles:
 	for (var n = this.minNeedle; n <= this.maxNeedle; ++n) {
-		this.frontNeedles[n-this.minNeedle].layout(frontLeft + n * NEEDLE_SPACING - 0.5*NEEDLE_WIDTH, canvas.height, -1);
+		this.frontNeedles[n-this.minNeedle].layout(frontLeft + n * NEEDLE_SPACING - 0.5*NEEDLE_WIDTH, ctx.height, -1);
 		this.backNeedles[n-this.minNeedle].layout(backLeft + n * NEEDLE_SPACING - 0.5*NEEDLE_WIDTH, 0, 1);
 	}
 
 	//draw links:
 	ctx.beginPath();
 	this.links.forEach(function(link){ link.addPath(ctx); });
+	ctx.lineCap = 'round';
 	ctx.lineWidth = 1.0;
 	ctx.strokeStyle = '#e11';
 	ctx.stroke();
+	ctx.lineCap = 'butt';
 
 	//draw all pinches/loops:
 	for (var n = this.minNeedle; n <= this.maxNeedle; ++n) {
@@ -553,17 +572,23 @@ TransferVisualizer.prototype.draw = function() {
 
 };
 
+TransferVisualizer.prototype.setRacking = function(racking) {
+	this.racking = racking;
+	this.requestDraw();
+};
+
+TransferVisualizer.prototype.clearMarks = function() {
+	function clearMarks(n) {
+		for (let item = n.base; item !== n.tip; item = item.stackNext) {
+			delete item.mark;
+		}
+	};
+	this.frontNeedles.forEach(clearMarks);
+	this.backNeedles.forEach(clearMarks);
+};
+
 //NOTE: 'from' and 'to' should have .bed and .needle members
 TransferVisualizer.prototype.xfer = function(from, to) {
-	//set racking for xfer:
-	if (from.bed[0] === 'b') {
-		this.racking = to.needle - from.needle;
-	} else { //xfering *to* back bed
-		this.racking = from.needle - to.needle;
-	}
-	//TODO: capture pinches
-
-	//move loops:
 	let fromNeedle = (from.bed[0] === 'f' ? this.frontNeedles : this.backNeedles)[from.needle - this.minNeedle];
 	let toNeedle = (to.bed[0] === 'f' ? this.frontNeedles : this.backNeedles)[to.needle - this.minNeedle];
 
@@ -585,13 +610,147 @@ TransferVisualizer.prototype.xfer = function(from, to) {
 		console.assert(toNeedle.hook.stackNext === toNeedle.tip, "can't xfer *over* to slider");
 	}
 
+	if (fromBase.stackNext === fromTip) return; //nothing to actually move
+
+	//set racking for xfer:
+	if (from.bed[0] === 'b') {
+		this.setRacking(to.needle - from.needle);
+	} else { //xfering *to* back bed
+		this.setRacking(from.needle - to.needle);
+	}
+
+	//capture pinches:
+
+	//walk around ccw the tip of the 'from' needle to the tip of the 'to' needle, accumulating links:
+	let iter = {
+		needles:(from.bed[0] === 'f' ? this.frontNeedles : this.backNeedles),
+		index:from.needle - this.minNeedle,
+		side:(from.bed[0] === 'f' ? 'right' : 'left')
+	};
+	iter.item = iter.needles[iter.index].tip;
+
+	let end = {
+		needles:(to.bed[0] === 'f' ? this.frontNeedles : this.backNeedles),
+		index:to.needle - this.minNeedle,
+		side:(to.bed[0] === 'f' ? 'left' : 'right')
+	};
+	end.item = end.needles[end.index].tip;
+
+	let tv = this;
+	iter.advance = function() {
+		//return 'false' if reached end:
+		if (this.item === end.item && this.side === end.side) return false;
+
+		//otherwise advance:
+		if ((this.side === 'left') === (this.needles === tv.frontNeedles)) {
+			//on the front left and back right, move toward tip
+			if (this.item.stackNext !== null) {
+				this.item = this.item.stackNext;
+			} else {
+				//if at tip, flip to other side:
+				this.side = (this.side === 'left' ? 'right' : 'left'); //flip around the tip
+			}
+		} else {
+			//on the front right and back left, move away from tip
+			if (this.item.stackPrev !== null) {
+				this.item = this.item.stackPrev;
+			} else {
+				//if base reached, move to next needle:
+				if (this.needles === tv.frontNeedles) {
+					console.assert(this.side === 'right', "must be on right");
+					this.index += 1;
+					if (this.index >= tv.frontNeedles.length) {
+						this.needles = tv.backNeedles;
+						this.index = tv.backNeedles.length - 1;
+						//stay on same (right) side.
+					} else {
+						this.side = 'left';
+					}
+				} else {
+					console.assert(this.side === 'left', "must be on left");
+					this.index -= 1;
+					if (this.index < 0) {
+						this.needles = tv.frontNeedles;
+						this.index = 0;
+						//stay on same (left) side.
+					} else {
+						this.side = 'right'; //flip to other side.
+					}
+				}
+				this.item = this.needles[this.index].base;
+			}
+		}
+		return true;
+	};
+
+	let sideStack = [];
+	do {
+		let side = iter.item[iter.side];
+		if (side.link) {
+			if (sideStack.length && sideStack[sideStack.length-1].link === side.link) {
+				sideStack.pop();
+			} else {
+				sideStack.push(side);
+			}
+		}
+	} while (iter.advance());
+
+	sideStack.forEach(function(side){
+		let other = (side === side.link.a ? side.link.b : side.link.a);
+		let slack = side.link.slack;
+
+		//NOTE: linked list of links would make this less expensive:
+		this.links.splice(this.links.indexOf(side.link), 1); //remove link from list
+		side.link.remove();
+
+		//DEBUG:
+		this.links.forEach(function(link){
+			console.assert(link.a !== null, "links shouldn't be removed (post-splice)");
+		});
+
+		//add pinch at tip of 'from':
+		let pinch = fromNeedle.makePinch(from.bed[1] === 's' ? 'slider' : 'hook');
+		console.log(side, other, slack, pinch);
+		if (from.bed[0] === 'f') {
+			//from is on front bed, so 'side' is on right
+			this.links.push(new TVLink(pinch.right, side, slack));
+			this.links.push(new TVLink(pinch.left, other, slack));
+		} else {
+			//from is on back bed, so 'side' is on left
+			this.links.push(new TVLink(pinch.right, other, slack));
+			this.links.push(new TVLink(pinch.left, side, slack));
+		}
+	}, this);
+
+	//DEBUG:
+	this.links.forEach(function(link){
+		console.assert(link.a !== null, "links shouldn't be removed");
+	});
+
+
+	//move loops:
 	while (fromTip.stackPrev !== fromBase) {
 		let obj = fromTip.stackPrev;
 		obj.remove();
 		obj.insertBefore(toTip);
+		obj.mark = true;
 	}
 
-	//TODO: release pinches
+	//release pinches
+	while (toTip.stackPrev.type === TYPE_PINCH) {
+		let pinch = toTip.stackPrev;
+		pinch.remove();
+		let a = (pinch.left.link.a === pinch.left ? pinch.left.link.b : pinch.left.link.a);
+		let b = (pinch.right.link.a === pinch.right ? pinch.right.link.b : pinch.right.link.a);
+		let slack = pinch.left.link.slack;
+
+		this.links.splice(this.links.indexOf(pinch.left.link), 1); //remove link from list
+		this.links.splice(this.links.indexOf(pinch.right.link), 1); //remove link from list
+		pinch.left.link.remove();
+		pinch.right.link.remove();
+
+		this.links.push(new TVLink(a, b, slack));
+	}
 
 	this.requestDraw();
 };
