@@ -66,7 +66,7 @@ function FlatTransferVisualizer(div) {
 	let me = this;
 	this.canvas.addEventListener('mousedown', function(evt){
 		evt.preventDefault();
-
+		
 		if (me.moves.length) {
 			let move = me.moves.shift();
 			let from = me.getNeedle(move.from.bed + move.from.needle);
@@ -80,6 +80,23 @@ function FlatTransferVisualizer(div) {
 			me.setRacking(racking);
 			to.loops.push(...from.loops.reverse());
 			from.loops = [];
+
+			let fromBed = from.bed;
+			let toBed = to.bed;
+			let fromTo = to.needle - from.needle;
+
+			while (me.moves.length) {
+				if (me.moves[0].from.bed === fromBed && me.moves[0].to.bed === toBed && me.moves[0].to.needle - me.moves[0].from.needle == fromTo) {
+					move = me.moves.shift();
+					from = me.getNeedle(move.from.bed + move.from.needle);
+					to = me.getNeedle(move.to.bed + move.to.needle);
+					to.loops.push(...from.loops.reverse());
+					from.loops = [];
+				} else {
+					break;
+				}
+			}
+
 			me.requestDraw();
 		}
 
