@@ -4,6 +4,31 @@
 <title>Flat transfer visualizer</title>
 </head>
 <style>
+#dropTarget {
+	position:fixed;
+	left:0;
+	bottom:0;
+	width:100%;
+	height:100%;
+	display:flex;
+	align-items:center;
+	justify-content:center;
+
+	background:#ccc;
+	outline:4px dashed #eee;
+	outline-offset:-20px;
+	z-index:100;
+	visibility:hidden;
+}
+#dropTarget.active {
+	visibility:visible;
+	background:#eee;
+	outline-color:#ccc;
+}
+#dropTarget div {
+	color:#aaa;
+	font-size:30px;
+}
 </style>
 <body>
 
@@ -12,7 +37,7 @@
 <div class="flatXferVis">
 ; {"offsets":[0,2,1,1,1,0,-1,0,0],
 ;   "firsts":[0,0,0,0,1,0, 0,0,0],
-;   "maxRacking":8}
+;   "transferMax":8}
 xfer f1 b1
 xfer f2 b2
 xfer f3 b2
@@ -20,6 +45,55 @@ xfer f4 bs4
 xfer bs4 f5
 </div>
 
+<div id="dropTarget"><div>Drop File Here To Load</div></div>
+
 <script src="flat-transfer-visualizer.js"></script>
+<script>
+//load + show drag-and-dropped xfer plans:
+
+function readFile(file) {
+	console.log("Attempting to read file: '" + file.name + "'");
+
+	var reader = new FileReader();
+	reader.onload = function(){
+		//console.log(reader.result);
+		window.FXV.parseMoves(reader.result);
+	};
+	reader.readAsText(file);
+}
+
+var dropTarget = document.getElementById("dropTarget");
+
+//dragging into the window loads files:
+dropTarget.addEventListener('dragover', function(evt){
+	dropTarget.classList.add("active");
+	evt.preventDefault();
+	return false;
+});
+dropTarget.addEventListener('dragleave', function(evt){
+	dropTarget.classList.remove("active");
+	evt.preventDefault();
+	return false;
+});
+dropTarget.addEventListener('drop', function(evt){
+	dropTarget.classList.remove("active");
+	try {
+		readFile(evt.dataTransfer.files[0]);
+	} catch (e) {
+		console.log(e);
+	}
+	evt.preventDefault();
+	return false;
+});
+
+//dragging into the window shows the target:
+document.addEventListener('dragover', function(evt){
+	dropTarget.classList.add("active");
+	evt.preventDefault();
+	return false;
+});
+
+
+</script>
 
 </body>

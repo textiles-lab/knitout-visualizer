@@ -141,17 +141,21 @@ FlatTransferVisualizer.prototype.parseMoves = function parseMoves(moves) {
 		if (!(Array.isArray(setup.offsets))) throw "setup JSON should have array of offsets";
 		if (!(Array.isArray(setup.firsts))) throw "setup JSON should have array of firsts";
 		if (setup.offsets.length !== setup.firsts.length) throw "setup JSON firsts and offsets should be the same length";
-		if (!Number.isInteger(setup.maxRacking) || setup.maxRacking <= 0) throw "setup JSON should have positive integer maxRacking";
+		if (Number.isInteger(setup.maxRacking) && setup.maxRacking > 0) {
+		} else if (Number.isInteger(setup.transferMax) && setup.transferMax > 0) {
+		} else {
+			throw "setup JSON should have positive integer maxRacking / transferMax";
+		}
 
 		setup.offsets.forEach(function(o,i){
 			if (!Number.isInteger(o)) throw "setup JSON offsets should be integers";
 			var first = Boolean(setup.firsts[i]);
-			this.loops.push({start:i+1, offset:o, first:first});
+			this.loops.push({start:i, offset:o, first:first});
 		}, this);
 
-		this.minNeedle = 1;
-		this.maxNeedle = this.loops.length;
-		this.maxRacking = setup.maxRacking;
+		this.minNeedle = 0;
+		this.maxNeedle = this.loops.length-1;
+		this.maxRacking = setup.maxRacking || setup.transferMax;
 
 		ops.forEach(function(op){
 			if (op[0] === "xfer") {
@@ -217,11 +221,13 @@ FlatTransferVisualizer.prototype.resizeCanvas = function() {
 	let maxWidth = par.clientWidth;
 	let maxHeight = par.clientHeight;
 	let scale = Math.max(1.0, Math.min(maxWidth / this.baseWidth, maxHeight / this.baseHeight));
+	let ratio = window.devicePixelRatio || 1.0;
+	scale *= ratio;
 	this.scale = scale;
 	this.canvas.width = Math.round(this.baseWidth * scale);
 	this.canvas.height = Math.round(this.baseHeight * scale);
-	this.canvas.style.width = this.canvas.width + "px";
-	this.canvas.style.height = this.canvas.height + "px";
+	this.canvas.style.width = (this.canvas.width / ratio) + "px";
+	this.canvas.style.height = (this.canvas.height / ratio) + "px";
 };
 
 FlatTransferVisualizer.prototype.error = function(message) {
