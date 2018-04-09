@@ -35,12 +35,15 @@
 <p>Here's some example transfers:</p>
 
 <div class="flatXferVis">
-; {"offsets":[0,2,1,1,1,0,-1,0,0],
-;   "firsts":[0,0,0,0,1,0, 0,0,0],
+; {"offsets":[0,1,0,-1,1,0,-1,0,0],
+;   "firsts":[0,0,0, 1,1,0, 0,0,0],
 ;   "transferMax":8}
 xfer f1 b1
 xfer f2 b2
-xfer f3 b2
+xfer f3 b3
+xfer b1 f2
+xfer b3 f2
+xfer b2 f2
 xfer f4 bs4
 xfer bs4 f5
 </div>

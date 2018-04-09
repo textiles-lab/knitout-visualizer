@@ -3,19 +3,26 @@
 const NEEDLE_SPACING = 15;
 
 const NEEDLE_WIDTH = 2;
-const SLIDER_WIDTH = 0.5;
+const SLIDER_WIDTH = 1;
 
-const LOOP_GAP = 0.5;
-const LOOP_WIDTH = 4;
-const YARN_RADIUS = 1;
+const LOOP_GAP = 1;
+const YARN_RADIUS = 1.5;
+const LOOP_WIDTH = NEEDLE_WIDTH + 2.0 * SLIDER_WIDTH + 2.0 * YARN_RADIUS;
 
-const INDICATOR_GAP = 0.5;
-const INDICATOR_WIDTH = 1.5;
+const INDICATOR_OFFSET = 1;
+const INDICATOR_GAP = -0.5;
+const INDICATOR_WIDTH = 2;
 
 const LOOP_COLORS = [
-	'#b11',
-	'#c11',
-	'#a11'
+	['#e11', '#a11', '#911'],
+	['#e11', '#b11', '#911'],
+	['#e11', '#c11', '#911'],
+];
+
+const FIRST_COLORS = [
+	['#e81', '#a51'],
+	['#e81', '#b61'],
+	['#e81', '#c71'],
 ];
 
 //
@@ -27,11 +34,13 @@ const LOOP_COLORS = [
 //       \_ UNDER_HEIGHT
 // ----  /
 
-const BED_GAP_HEIGHT = 6;
-const NEEDLE_HEIGHT = 6;
+const BED_GAP_HEIGHT = 9;
+const NEEDLE_HEIGHT = 12;
 const UNDER_HEIGHT = 5;
 
-const EXTEND_HEIGHT = 5; //how far into the bed gap to extend
+const EXTEND_HEIGHT = 8; //how far into the bed gap to extend
+
+const EXTEND_SPEED = EXTEND_HEIGHT / 0.25;
 
 function parseBedNeedle(str) {
 	let m = str.match(/^([fb]s?)(-?\d+)$/);
@@ -119,14 +128,14 @@ function FlatTransferVisualizer(div) {
 					var moving = false;
 					function extend(n){
 						if (n.extend < EXTEND_HEIGHT) {
-							n.extend = Math.min(EXTEND_HEIGHT, n.extend + elapsed * EXTEND_HEIGHT);
+							n.extend = Math.min(EXTEND_HEIGHT, n.extend + elapsed * EXTEND_SPEED);
 							moving = true;
 						}
 					}
 					function retract(n){
 						//hook
 						if (n.extend > 0.0) {
-							n.extend = Math.max(0.0, n.extend - elapsed * EXTEND_HEIGHT);
+							n.extend = Math.max(0.0, n.extend - elapsed * EXTEND_SPEED);
 							moving = true;
 						}
 					}
@@ -135,38 +144,51 @@ function FlatTransferVisualizer(div) {
 						froms.forEach(extend);
 						if (moving) return 0.0;
 						this.phase = 1;
-						console.log("Moving to phase " + this.phase);
+						//console.log("Moving to phase " + this.phase);
+						for (let i = 0; i < froms.length; ++i) {
+							let from = froms[i];
+							let to = tos[i];
+							to[(to.bed[0] === 'f') ? "max" : "min"] = true;
+						}
 					}
 					if (this.phase === 1) {
 						//extend 'to':
 						tos.forEach(extend);
 						if (moving) return 0.0;
 						this.phase = 2;
-						console.log("Moving to phase " + this.phase);
+						//console.log("Moving to phase " + this.phase);
+						for (let i = 0; i < froms.length; ++i) {
+							let from = froms[i];
+							let to = tos[i];
+							to.loops.push(...from.loops.reverse());
+							from.loops = [];
+						}
 					}
 					if (this.phase === 2) {
 						//retract 'from':
 						froms.forEach(retract);
 						if (moving) return 0.0;
 						this.phase = 3;
-						console.log("Moving to phase " + this.phase);
+						//console.log("Moving to phase " + this.phase);
 					}
 					if (this.phase === 3) {
 						//retract 'to':
 						tos.forEach(retract);
 						if (moving) return 0.0;
 						this.phase = 4;
-						console.log("Moving to phase " + this.phase);
+						//console.log("Moving to phase " + this.phase);
 					}
 					return elapsed;
 				},
 				finish:function() {
-					console.log("Finishing from/to"); //DEBUG
+					//console.log("Finishing from/to"); //DEBUG
 					for (let i = 0; i < froms.length; ++i) {
 						let from = froms[i];
 						let to = tos[i];
 						to.loops.push(...from.loops.reverse());
 						from.loops = [];
+						delete to.min;
+						delete to.max;
 					}
 				}
 			});
@@ -309,7 +331,7 @@ FlatTransferVisualizer.prototype.resizeCanvas = function() {
 	let par = this.container;
 	let maxWidth = par.clientWidth;
 	let maxHeight = par.clientHeight;
-	let scale = Math.max(1.0, Math.min(maxWidth / this.baseWidth, maxHeight / this.baseHeight));
+	let scale = Math.max(2.0, Math.min(maxWidth / this.baseWidth, maxHeight / this.baseHeight));
 	let ratio = window.devicePixelRatio || 1.0;
 	scale *= ratio;
 	this.scale = scale;
@@ -406,8 +428,8 @@ FlatTransferVisualizer.prototype.draw = function() {
 		let x,y,prevX,yStep;
 		if (n.bed === 'b' || n.bed === 'bs') {
 			x = n.needle * NEEDLE_SPACING + backLeft;
-			prevX = x + this.racking;
-			y = NEEDLE_HEIGHT;
+			prevX = x;
+			y = NEEDLE_HEIGHT + n.extend;
 			if (n.bed === 'b') {
 				y -= n.loops.length * (2.0 * YARN_RADIUS + LOOP_GAP);
 			}
@@ -415,7 +437,7 @@ FlatTransferVisualizer.prototype.draw = function() {
 		} else if (n.bed === 'f' || n.bed === 'fs') {
 			x = n.needle * NEEDLE_SPACING + frontLeft;
 			prevX = x;
-			y = NEEDLE_HEIGHT + BED_GAP_HEIGHT;
+			y = NEEDLE_HEIGHT + BED_GAP_HEIGHT - n.extend;
 			if (n.bed === 'f') {
 				y += n.loops.length * (2.0 * YARN_RADIUS + LOOP_GAP);
 			}
@@ -431,9 +453,18 @@ FlatTransferVisualizer.prototype.draw = function() {
 		}
 		n.loops.forEach(function(l, i){
 			l.wantedOffset = l.start + l.offset - n.needle;
+			let newY = y + (LOOP_GAP + YARN_RADIUS + i * (2.0 * YARN_RADIUS + LOOP_GAP)) * yStep;
+			if ('at' in l) {
+				if (n.min) {
+					newY = Math.min(newY, l.at.y);
+				} else if (n.max) {
+					newY = Math.max(newY, l.at.y);
+				}
+			}
+			
 			l.at = {
 				x:x,
-				y:y + (LOOP_GAP + YARN_RADIUS + i * (2.0 * YARN_RADIUS + LOOP_GAP)) * yStep
+				y:newY
 			};
 			l.prevX = prevX;
 		});
@@ -472,7 +503,7 @@ FlatTransferVisualizer.prototype.draw = function() {
 
 		ctx.lineCap = 'round';
 		ctx.lineWidth = 2.0 * YARN_RADIUS;
-		ctx.strokeStyle = LOOP_COLORS[(l.start - this.minNeedle) % LOOP_COLORS.length];
+		ctx.strokeStyle = (l.first ? FIRST_COLORS : LOOP_COLORS)[(l.start - this.minNeedle) % LOOP_COLORS.length][1];
 		ctx.stroke();
 	}, this);
 	ctx.lineCap = 'butt';
@@ -485,7 +516,7 @@ FlatTransferVisualizer.prototype.draw = function() {
 
 		ctx.lineCap = 'round';
 		ctx.lineWidth = 2.0 * YARN_RADIUS;
-		ctx.strokeStyle = '#911';
+		ctx.strokeStyle = LOOP_COLORS[(l.start - this.minNeedle) % LOOP_COLORS.length][2];
 		ctx.stroke();
 	}, this);
 
@@ -521,16 +552,15 @@ FlatTransferVisualizer.prototype.draw = function() {
 	}
 
 	//draw loops on needles:
-	ctx.beginPath();
-	this.loops.forEach(function(l){
-		ctx.moveTo(l.at.x - 0.5 * LOOP_WIDTH, l.at.y);
-		ctx.lineTo(l.at.x + 0.5 * LOOP_WIDTH, l.at.y);
-	},this);
-
 	ctx.lineCap = 'round';
 	ctx.lineWidth = 2.0 * YARN_RADIUS;
-	ctx.strokeStyle = '#e11';
-	ctx.stroke();
+	this.loops.forEach(function(l){
+		ctx.beginPath();
+		ctx.moveTo(l.at.x - 0.5 * LOOP_WIDTH, l.at.y);
+		ctx.lineTo(l.at.x + 0.5 * LOOP_WIDTH, l.at.y);
+		ctx.strokeStyle = (l.first ? FIRST_COLORS : LOOP_COLORS)[(l.start - this.minNeedle) % LOOP_COLORS.length][0];
+		ctx.stroke();
+	},this);
 	ctx.lineCap = 'butt';
 
 	//draw loop offset indicators:
@@ -538,7 +568,7 @@ FlatTransferVisualizer.prototype.draw = function() {
 		if (l.wantedOffset === 0) return;
 		ctx.beginPath();
 		for (let o = 1; o <= l.wantedOffset; ++o) {
-			let x = l.at.x + 0.5 * LOOP_WIDTH + YARN_RADIUS + (INDICATOR_GAP + INDICATOR_WIDTH) * o;
+			let x = l.at.x + 0.5 * LOOP_WIDTH + YARN_RADIUS + INDICATOR_OFFSET + (INDICATOR_GAP + INDICATOR_WIDTH) * o;
 			let y = l.at.y;
 			ctx.moveTo(x, y);
 			ctx.lineTo(x - INDICATOR_WIDTH, y + 0.75 * INDICATOR_WIDTH);
@@ -546,7 +576,7 @@ FlatTransferVisualizer.prototype.draw = function() {
 			ctx.closePath();
 		}
 		for (let o = -1; o >= l.wantedOffset; --o) {
-			let x = l.at.x - 0.5 * LOOP_WIDTH - YARN_RADIUS + (INDICATOR_GAP + INDICATOR_WIDTH) * o;
+			let x = l.at.x - 0.5 * LOOP_WIDTH - YARN_RADIUS - INDICATOR_OFFSET + (INDICATOR_GAP + INDICATOR_WIDTH) * o;
 			let y = l.at.y;
 			ctx.moveTo(x, y);
 			ctx.lineTo(x + INDICATOR_WIDTH, y + 0.75 * INDICATOR_WIDTH);
@@ -576,9 +606,9 @@ FlatTransferVisualizer.prototype.setRacking = function(racking) {
 			if (fxv.racking === racking) {
 				return elapsed;
 			} else if (fxv.racking < racking) {
-				fxv.racking = Math.min(fxv.racking + 0.5 * elapsed, racking);
+				fxv.racking = Math.min(fxv.racking + 2.5 * elapsed, racking);
 			} else { //(fxv.racking > racking)
-				fxv.racking = Math.max(fxv.racking - 0.5 * elapsed, racking);
+				fxv.racking = Math.max(fxv.racking - 2.5 * elapsed, racking);
 			}
 			return 0.0;
 		},
