@@ -31,6 +31,8 @@ const BED_GAP_HEIGHT = 6;
 const NEEDLE_HEIGHT = 6;
 const UNDER_HEIGHT = 5;
 
+const EXTEND_HEIGHT = 5; //how far into the bed gap to extend
+
 function parseBedNeedle(str) {
 	let m = str.match(/^([fb]s?)(-?\d+)$/);
 	if (m === null) {
@@ -45,6 +47,8 @@ function parseBedNeedle(str) {
 
 function FlatTransferVisualizer(div) {
 	window.FXV = this; //DEBUG
+
+	this.animations = [];
 
 	//remove div contents (store for later use as moves):
 	var moves = div.innerHTML;
@@ -77,27 +81,95 @@ function FlatTransferVisualizer(div) {
 			} else {
 				racking = to.needle - from.needle;
 			}
-			me.setRacking(racking);
-			to.loops.push(...from.loops.reverse());
-			from.loops = [];
+			//to.loops.push(...from.loops.reverse());
+			//from.loops = [];
 
 			let fromBed = from.bed;
 			let toBed = to.bed;
 			let fromTo = to.needle - from.needle;
 
+			let froms = [from];
+			let tos = [to];
+
 			while (me.moves.length) {
 				if (me.moves[0].from.bed === fromBed && me.moves[0].to.bed === toBed && me.moves[0].to.needle - me.moves[0].from.needle == fromTo) {
 					move = me.moves.shift();
-					from = me.getNeedle(move.from.bed + move.from.needle);
-					to = me.getNeedle(move.to.bed + move.to.needle);
-					to.loops.push(...from.loops.reverse());
-					from.loops = [];
+					froms.push(me.getNeedle(move.from.bed + move.from.needle));
+					tos.push(me.getNeedle(move.to.bed + move.to.needle));
+					//to.loops.push(...from.loops.reverse());
+					//from.loops = [];
 				} else {
 					break;
 				}
 			}
 
-			me.requestDraw();
+			me.setRacking(racking);
+			//idea:
+			// extend 'from' loops and slider
+			// extend 'to' hook/slider
+			// retract 'from' slider
+			// (loops get re-assigned?)
+			// retract 'to' hook/slider, compacting loops
+			//need:
+			// - extend amount for hook/slider (in the end it's always slider?)
+			// - pad amount for destination hook/slider (how many loops to assume already exist?
+			me.queueAnimation({
+				phase:0,
+				update:function(elapsed) {
+					var moving = false;
+					function extend(n){
+						if (n.extend < EXTEND_HEIGHT) {
+							n.extend = Math.min(EXTEND_HEIGHT, n.extend + elapsed * EXTEND_HEIGHT);
+							moving = true;
+						}
+					}
+					function retract(n){
+						//hook
+						if (n.extend > 0.0) {
+							n.extend = Math.max(0.0, n.extend - elapsed * EXTEND_HEIGHT);
+							moving = true;
+						}
+					}
+					if (this.phase === 0) {
+						//extend 'from':
+						froms.forEach(extend);
+						if (moving) return 0.0;
+						this.phase = 1;
+						console.log("Moving to phase " + this.phase);
+					}
+					if (this.phase === 1) {
+						//extend 'to':
+						tos.forEach(extend);
+						if (moving) return 0.0;
+						this.phase = 2;
+						console.log("Moving to phase " + this.phase);
+					}
+					if (this.phase === 2) {
+						//retract 'from':
+						froms.forEach(retract);
+						if (moving) return 0.0;
+						this.phase = 3;
+						console.log("Moving to phase " + this.phase);
+					}
+					if (this.phase === 3) {
+						//retract 'to':
+						tos.forEach(retract);
+						if (moving) return 0.0;
+						this.phase = 4;
+						console.log("Moving to phase " + this.phase);
+					}
+					return elapsed;
+				},
+				finish:function() {
+					console.log("Finishing from/to"); //DEBUG
+					for (let i = 0; i < froms.length; ++i) {
+						let from = froms[i];
+						let to = tos[i];
+						to.loops.push(...from.loops.reverse());
+						from.loops = [];
+					}
+				}
+			});
 		}
 
 		return false;
@@ -108,7 +180,7 @@ function FlatTransferVisualizer(div) {
 FlatTransferVisualizer.prototype.getNeedle = function getNeedle(name) {
 	if (!(name in this.needles)) {
 		var bn = parseBedNeedle(name);
-		this.needles[name] = {bed:bn.bed, needle:bn.needle, loops:[]};
+		this.needles[name] = {bed:bn.bed, needle:bn.needle, loops:[], extend:0.0};
 	}
 	return this.needles[name];
 };
@@ -255,12 +327,44 @@ FlatTransferVisualizer.prototype.error = function(message) {
 	//TODO: draw message somewhere on the device
 };
 
+FlatTransferVisualizer.prototype.queueAnimation = function(anim) {
+	console.assert('update' in anim, "Animations should have 'update' function");
+	console.assert('finish' in anim, "Animations should have 'finish' function");
+	if (this.animations.length == 0) {
+		delete this.lastTimestamp;
+	}
+	this.animations.push(anim);
+	this.requestDraw();
+};
+
 FlatTransferVisualizer.prototype.requestDraw = function() {
 	if (this.hasError) return; //don't trigger draws if there is an error
 	if (this.drawRequested) return;
 	this.drawRequested = true;
 	var me = this;
-	window.requestAnimationFrame(function(ts){ delete me.drawRequested; me.draw(); });
+	window.requestAnimationFrame(function(ts){
+		delete me.drawRequested;
+		var elapsed = 0.0;
+		if ('lastTimestamp' in me) {
+			elapsed = (ts - me.lastTimestamp) / 1000.0;
+		}
+		me.lastTimestamp = ts;
+		me.update(elapsed);
+		me.draw();
+	});
+};
+
+FlatTransferVisualizer.prototype.update = function(elapsed) {
+	while (this.animations.length) {
+		let remain = this.animations[0].update(elapsed);
+		if (remain === 0.0) break;
+		this.animations[0].finish();
+		this.animations.shift();
+		elapsed = remain;
+	}
+	if (this.animations.length) {
+		this.requestDraw();
+	}
 };
 
 FlatTransferVisualizer.prototype.draw = function() {
@@ -389,25 +493,31 @@ FlatTransferVisualizer.prototype.draw = function() {
 	//draw needles:
 	//front:
 	for (let i = this.minNeedle; i <= this.maxNeedle; ++i) {
+		let extendHook = (('f' + i) in this.needles) ? this.needles['f' + i].extend : 0.0;
+		let extendSlider = (('fs' + i) in this.needles) ? this.needles['fs' + i].extend : 0.0;
+
 		let x = i * NEEDLE_SPACING + frontLeft;
 		let y = NEEDLE_HEIGHT + BED_GAP_HEIGHT;
 		ctx.fillStyle = '#888';
-		ctx.fillRect(x - 0.5 * NEEDLE_WIDTH, y, NEEDLE_WIDTH, NEEDLE_HEIGHT);
+		ctx.fillRect(x - 0.5 * NEEDLE_WIDTH, y - extendHook, NEEDLE_WIDTH, NEEDLE_HEIGHT);
 		ctx.fillStyle = '#aaa';
 		let h = LOOP_GAP + (LOOP_GAP + 2.0 * YARN_RADIUS) * onFrontSlider[i - this.minNeedle];
-		ctx.fillRect(x - 0.5 * NEEDLE_WIDTH - SLIDER_WIDTH, y - h, SLIDER_WIDTH, h + NEEDLE_HEIGHT);
-		ctx.fillRect(x + 0.5 * NEEDLE_WIDTH, y - h, SLIDER_WIDTH, h + NEEDLE_HEIGHT);
+		ctx.fillRect(x - 0.5 * NEEDLE_WIDTH - SLIDER_WIDTH, y - extendSlider - h, SLIDER_WIDTH, h + NEEDLE_HEIGHT);
+		ctx.fillRect(x + 0.5 * NEEDLE_WIDTH, y - extendSlider - h, SLIDER_WIDTH, h + NEEDLE_HEIGHT);
 	}
 	//back:
 	for (let i = this.minNeedle; i <= this.maxNeedle; ++i) {
+		let extendHook = (('b' + i) in this.needles) ? this.needles['b' + i].extend : 0.0;
+		let extendSlider = (('bs' + i) in this.needles) ? this.needles['bs' + i].extend : 0.0;
+
 		let x = i * NEEDLE_SPACING + backLeft;
 		let y = NEEDLE_HEIGHT;
 		ctx.fillStyle = '#888';
-		ctx.fillRect(x - 0.5 * NEEDLE_WIDTH, y - NEEDLE_HEIGHT, NEEDLE_WIDTH, NEEDLE_HEIGHT);
+		ctx.fillRect(x - 0.5 * NEEDLE_WIDTH, y + extendHook - NEEDLE_HEIGHT, NEEDLE_WIDTH, NEEDLE_HEIGHT);
 		ctx.fillStyle = '#aaa';
 		let h = LOOP_GAP + (LOOP_GAP + 2.0 * YARN_RADIUS) * onBackSlider[i - this.minNeedle];
-		ctx.fillRect(x - 0.5 * NEEDLE_WIDTH - SLIDER_WIDTH, y - NEEDLE_HEIGHT, SLIDER_WIDTH, h + NEEDLE_HEIGHT);
-		ctx.fillRect(x + 0.5 * NEEDLE_WIDTH, y - NEEDLE_HEIGHT, SLIDER_WIDTH, h + NEEDLE_HEIGHT);
+		ctx.fillRect(x - 0.5 * NEEDLE_WIDTH - SLIDER_WIDTH, y + extendSlider - NEEDLE_HEIGHT, SLIDER_WIDTH, h + NEEDLE_HEIGHT);
+		ctx.fillRect(x + 0.5 * NEEDLE_WIDTH, y + extendSlider - NEEDLE_HEIGHT, SLIDER_WIDTH, h + NEEDLE_HEIGHT);
 	}
 
 	//draw loops on needles:
@@ -460,8 +570,22 @@ FlatTransferVisualizer.prototype.draw = function() {
 };
 
 FlatTransferVisualizer.prototype.setRacking = function(racking) {
-	this.racking = racking;
-	this.requestDraw();
+	let fxv = this;
+	this.queueAnimation({
+		update:function(elapsed){
+			if (fxv.racking === racking) {
+				return elapsed;
+			} else if (fxv.racking < racking) {
+				fxv.racking = Math.min(fxv.racking + 0.5 * elapsed, racking);
+			} else { //(fxv.racking > racking)
+				fxv.racking = Math.max(fxv.racking - 0.5 * elapsed, racking);
+			}
+			return 0.0;
+		},
+		finish:function(elapsed){
+			fxv.racking = racking;
+		}
+	});
 };
 
 //NOTE: 'from' and 'to' should have .bed and .needle members
