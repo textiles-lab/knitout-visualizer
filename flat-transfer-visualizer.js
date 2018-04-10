@@ -453,6 +453,7 @@ FlatTransferVisualizer.prototype.draw = function() {
 		}
 		n.loops.forEach(function(l, i){
 			l.wantedOffset = l.start + l.offset - n.needle;
+			if (n.bed[0] === 'b') l.wantedOffset = Math.round(l.wantedOffset - this.racking);
 			let newY = y + (LOOP_GAP + YARN_RADIUS + i * (2.0 * YARN_RADIUS + LOOP_GAP)) * yStep;
 			if ('at' in l) {
 				if (n.min) {
@@ -467,7 +468,7 @@ FlatTransferVisualizer.prototype.draw = function() {
 				y:newY
 			};
 			l.prevX = prevX;
-		});
+		}, this);
 	}
 
 	//update previous loop positions:
