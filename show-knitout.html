@@ -29,12 +29,18 @@ code.knitout {
 	background:#eee;
 	outline-color:#ccc;
 }
+#file {
+	display:none;
+}
+#fileLabel span {
+	cursor:pointer;
+	text-decoration:underline;
+}
 
 </style>
 <body>
-<p>
-Drop a ".k" file into the window to visualize it.
-</p>
+<input id="file" type="file" />
+<label id="fileLabel" for="file"><span>Choose a knitout file</span> or drag one into the window to visualize it.</label>
 
 <p>Here's some example knitout code:</p>
 
@@ -389,6 +395,17 @@ dropTarget.addEventListener('drop', function(evt){
 //dragging into the window shows the target:
 document.addEventListener('dragover', function(evt){
 	dropTarget.classList.add("active");
+	evt.preventDefault();
+	return false;
+});
+
+var file = document.getElementById("file");
+file.addEventListener('change', function(evt){
+	try {
+		readFile(file.files[0]);
+	} catch (e) {
+		console.log(e);
+	}
 	evt.preventDefault();
 	return false;
 });
