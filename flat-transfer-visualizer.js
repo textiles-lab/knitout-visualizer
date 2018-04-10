@@ -520,6 +520,15 @@ FlatTransferVisualizer.prototype.draw = function() {
 		ctx.stroke();
 	}, this);
 
+	//fade everything a bit:
+	let t = NEEDLE_HEIGHT + BED_GAP_HEIGHT + 0.5 * NEEDLE_HEIGHT;
+	let grad = ctx.createLinearGradient(0, t, 0, ctx.height);
+	grad.addColorStop(0, 'rgba(238,238,238,0.0)');
+	grad.addColorStop(1, 'rgba(238,238,238,0.8)');
+	ctx.fillStyle = grad;
+	console
+	ctx.fillRect(0, t, ctx.width, ctx.height - t);
+
 
 	//draw needles:
 	//front:
@@ -583,18 +592,8 @@ FlatTransferVisualizer.prototype.draw = function() {
 			ctx.lineTo(x + INDICATOR_WIDTH, y - 0.75 * INDICATOR_WIDTH);
 			ctx.closePath();
 		}
-		if (l.first) {
-			ctx.lineWidth = 2.0 * px;
-			ctx.strokeStyle = '#000';
-			ctx.lineCap = 'round';
-			ctx.lineJoin = 'round';
-			ctx.stroke();
-			ctx.fillStyle = '#ff0';
-			ctx.fill();
-		} else {
-			ctx.fillStyle = '#000';
-			ctx.fill();
-		}
+		ctx.fillStyle = '#000';
+		ctx.fill();
 	},this);
 
 };
