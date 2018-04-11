@@ -79,125 +79,139 @@ function FlatTransferVisualizer(div) {
 	let me = this;
 	this.canvas.addEventListener('mousedown', function(evt){
 		evt.preventDefault();
-		
-		if (me.moves.length) {
-			let move = me.moves.shift();
-			let from = me.getNeedle(move.from.bed + move.from.needle);
-			let to = me.getNeedle(move.to.bed + move.to.needle);
-			let racking;
-			if (from.bed[0] === 'f') {
-				racking = from.needle - to.needle;
-			} else {
-				racking = to.needle - from.needle;
-			}
-			//to.loops.push(...from.loops.reverse());
-			//from.loops = [];
-
-			let fromBed = from.bed;
-			let toBed = to.bed;
-			let fromTo = to.needle - from.needle;
-
-			let froms = [from];
-			let tos = [to];
-
-			while (me.moves.length) {
-				if (me.moves[0].from.bed === fromBed && me.moves[0].to.bed === toBed && me.moves[0].to.needle - me.moves[0].from.needle == fromTo) {
-					move = me.moves.shift();
-					froms.push(me.getNeedle(move.from.bed + move.from.needle));
-					tos.push(me.getNeedle(move.to.bed + move.to.needle));
-					//to.loops.push(...from.loops.reverse());
-					//from.loops = [];
-				} else {
-					break;
-				}
-			}
-
-			me.setRacking(racking);
-			//idea:
-			// extend 'from' loops and slider
-			// extend 'to' hook/slider
-			// retract 'from' slider
-			// (loops get re-assigned?)
-			// retract 'to' hook/slider, compacting loops
-			//need:
-			// - extend amount for hook/slider (in the end it's always slider?)
-			// - pad amount for destination hook/slider (how many loops to assume already exist?
-			me.queueAnimation({
-				phase:0,
-				update:function(elapsed) {
-					var moving = false;
-					function extend(n){
-						if (n.extend < EXTEND_HEIGHT) {
-							n.extend = Math.min(EXTEND_HEIGHT, n.extend + elapsed * EXTEND_SPEED);
-							moving = true;
-						}
-					}
-					function retract(n){
-						//hook
-						if (n.extend > 0.0) {
-							n.extend = Math.max(0.0, n.extend - elapsed * EXTEND_SPEED);
-							moving = true;
-						}
-					}
-					if (this.phase === 0) {
-						//extend 'from':
-						froms.forEach(extend);
-						if (moving) return 0.0;
-						this.phase = 1;
-						//console.log("Moving to phase " + this.phase);
-						for (let i = 0; i < froms.length; ++i) {
-							let from = froms[i];
-							let to = tos[i];
-							to[(to.bed[0] === 'f') ? "max" : "min"] = true;
-						}
-					}
-					if (this.phase === 1) {
-						//extend 'to':
-						tos.forEach(extend);
-						if (moving) return 0.0;
-						this.phase = 2;
-						//console.log("Moving to phase " + this.phase);
-						for (let i = 0; i < froms.length; ++i) {
-							let from = froms[i];
-							let to = tos[i];
-							to.loops.push(...from.loops.reverse());
-							from.loops = [];
-						}
-					}
-					if (this.phase === 2) {
-						//retract 'from':
-						froms.forEach(retract);
-						if (moving) return 0.0;
-						this.phase = 3;
-						//console.log("Moving to phase " + this.phase);
-					}
-					if (this.phase === 3) {
-						//retract 'to':
-						tos.forEach(retract);
-						if (moving) return 0.0;
-						this.phase = 4;
-						//console.log("Moving to phase " + this.phase);
-					}
-					return elapsed;
-				},
-				finish:function() {
-					//console.log("Finishing from/to"); //DEBUG
-					for (let i = 0; i < froms.length; ++i) {
-						let from = froms[i];
-						let to = tos[i];
-						to.loops.push(...from.loops.reverse());
-						from.loops = [];
-						delete to.min;
-						delete to.max;
-					}
-				}
-			});
-		}
-
+		me.nextPass();
 		return false;
 	});
-
 }
+
+FlatTransferVisualizer.prototype.nextPass = function nextPass() {
+	if (this.nextMove >= this.moves.length) {
+		if (this.racking !== 0) {
+			this.setRacking(0);
+			return true;
+		} else {
+			//restore first state
+			this.needles = { };
+			this.loops.forEach(function(l){
+				this.getNeedle('f' + l.start).loops.push(l);
+			}, this);
+			this.nextMove = 0;
+			this.requestDraw();
+			return false;
+		}
+	}
+
+	//aggregate a pass's worth of moves:
+	let move = this.moves[this.nextMove];
+	this.nextMove += 1;
+	let from = this.getNeedle(move.from.bed + move.from.needle);
+	let to = this.getNeedle(move.to.bed + move.to.needle);
+	let racking;
+	if (from.bed[0] === 'f') {
+		racking = from.needle - to.needle;
+	} else {
+		racking = to.needle - from.needle;
+	}
+
+	let fromBed = from.bed;
+	let toBed = to.bed;
+	let fromTo = to.needle - from.needle;
+
+	let froms = [from];
+	let tos = [to];
+
+	while (this.nextMove < this.moves.length) {
+		let next = this.moves[this.nextMove];
+		if (next.from.bed === fromBed && next.to.bed === toBed && next.to.needle - next.from.needle == fromTo) {
+			this.nextMove += 1;
+			move = next;
+			froms.push(this.getNeedle(move.from.bed + move.from.needle));
+			tos.push(this.getNeedle(move.to.bed + move.to.needle));
+		} else {
+			break;
+		}
+	}
+
+	//animate those moves:
+	this.setRacking(racking);
+	//idea:
+	// extend 'from' loops and slider
+	// extend 'to' hook/slider
+	// retract 'from' slider
+	// (loops get re-assigned?)
+	// retract 'to' hook/slider, compacting loops
+	this.queueAnimation({
+		phase:0,
+		update:function(elapsed) {
+			var moving = false;
+			function extend(n){
+				if (n.extend < EXTEND_HEIGHT) {
+					n.extend = Math.min(EXTEND_HEIGHT, n.extend + elapsed * EXTEND_SPEED);
+					moving = true;
+				}
+			}
+			function retract(n){
+				//hook
+				if (n.extend > 0.0) {
+					n.extend = Math.max(0.0, n.extend - elapsed * EXTEND_SPEED);
+					moving = true;
+				}
+			}
+			if (this.phase === 0) {
+				//extend 'from':
+				froms.forEach(extend);
+				if (moving) return 0.0;
+				this.phase = 1;
+				//console.log("Moving to phase " + this.phase);
+				for (let i = 0; i < froms.length; ++i) {
+					let from = froms[i];
+					let to = tos[i];
+					to[(to.bed[0] === 'f') ? "max" : "min"] = true;
+				}
+			}
+			if (this.phase === 1) {
+				//extend 'to':
+				tos.forEach(extend);
+				if (moving) return 0.0;
+				this.phase = 2;
+				//console.log("Moving to phase " + this.phase);
+				for (let i = 0; i < froms.length; ++i) {
+					let from = froms[i];
+					let to = tos[i];
+					to.loops.push(...from.loops.reverse());
+					from.loops = [];
+				}
+			}
+			if (this.phase === 2) {
+				//retract 'from':
+				froms.forEach(retract);
+				if (moving) return 0.0;
+				this.phase = 3;
+				//console.log("Moving to phase " + this.phase);
+			}
+			if (this.phase === 3) {
+				//retract 'to':
+				tos.forEach(retract);
+				if (moving) return 0.0;
+				this.phase = 4;
+				//console.log("Moving to phase " + this.phase);
+			}
+			return elapsed;
+		},
+		finish:function() {
+			//console.log("Finishing from/to"); //DEBUG
+			for (let i = 0; i < froms.length; ++i) {
+				let from = froms[i];
+				let to = tos[i];
+				to.loops.push(...from.loops.reverse());
+				from.loops = [];
+				delete to.min;
+				delete to.max;
+			}
+		}
+	});
+	return true;
+};
 
 FlatTransferVisualizer.prototype.getNeedle = function getNeedle(name) {
 	if (!(name in this.needles)) {
@@ -215,12 +229,12 @@ FlatTransferVisualizer.prototype.parseMoves = function parseMoves(moves) {
 
 	this.loops = []; // {start:i, offset:o, first:true/false}
 	this.moves = []; // {from:, to:}
+	this.nextMove = 0;
 
 	let setupJSON = "";
 	let inSetup = false;
 
 	let ops = [];
-
 	moves.split(/\n/).forEach(function(line){
 		let comment = "";
 
@@ -389,13 +403,86 @@ FlatTransferVisualizer.prototype.update = function(elapsed) {
 	}
 };
 
+FlatTransferVisualizer.prototype.getSVG = function() {
+	this.scale = 1.0;
+	let canvas = { width:this.baseWidth, height:this.baseHeight };
+
+	let xf = [1,0, 0,1, 0,0];
+	let pathData = '';
+	let commands = [];
+
+	let svg = {
+		resetTransform : function() { xf = [1,0, 0,1, 0,0]; },
+		setTransform : function(...args) {
+			console.assert(args.length === 6, "setTransform takes exactly six arguments");
+			xf = args.slice();
+		},
+
+		createLinearGradient : function(x0, y0, x1, y1) {
+			return {
+				addColorStop: function() {
+					//TODO
+				}
+			};
+		},
+
+		fillStyle:'#f0f',
+		strokeStyle:'#f0f',
+		lineWidth:1.0,
+		lineCap:'butt',
+		lineJoin:'miter',
+
+		fillRect : function(x,y,w,h) {
+			commands.push('<rect style="fill:' + this.fillStyle + ';stroke:none;" x="' + x + '" y="' + y + '" width="' + w + '"  height="' + h + '" />');
+		},
+		beginPath : function() {
+			pathData = '';
+		},
+		moveTo : function(x,y) {
+			pathData += 'M' + x + ' ' + y;
+		},
+		lineTo : function(x,y) {
+			pathData += 'L' + x + ' ' + y;
+		},
+		bezierCurveTo : function(x1,y1,x2,y2,x,y) {
+			pathData += 'C' + x1 + ' ' + y1 + ' ' + x2 + ' ' + y2 + ' ' + x + ' ' + y;
+		},
+		closePath : function(x1,y1,x2,y2,x,y) {
+			pathData += 'Z';
+		},
+		stroke : function() {
+			commands.push('<path fill="none" stroke="' + this.strokeStyle + '" stroke-width="' + this.lineWidth + '" stroke-linecap="' + this.lineCap + '" stroke-linejoin="' + this.lineJoin + '" d="'+pathData+'" />');
+		},
+		fill : function() {
+			commands.push('<path style="fill:' + this.fillStyle + ';stroke:none;" d="'+pathData+'" />');
+		},
+	};
+
+	this.drawHelper(canvas, svg);
+
+	commands.unshift('<svg width="' + 4 * this.baseWidth + 'px" height="' + 4 * this.baseHeight + 'px" viewBox="0 0 '+ this.baseWidth+' '+this.baseHeight+'">');
+	commands.push('</svg>');
+
+/*
+	let elt = document.createElement('div');
+	elt.innerHTML = commands.join("\n");
+	document.body.appendChild(elt);
+*/
+
+	return commands.join("\n");
+
+};
+
 FlatTransferVisualizer.prototype.draw = function() {
 	if (this.hasError) return; //don't draw over error condition
 
 	this.resizeCanvas();
 
-	const ctx = this.ctx;
-	const canvas = this.canvas;
+	this.drawHelper(this.canvas, this.ctx);
+};
+
+
+FlatTransferVisualizer.prototype.drawHelper = function(canvas, ctx) {
 
 	ctx.resetTransform();
 	ctx.fillStyle = '#eee';
@@ -618,21 +705,58 @@ FlatTransferVisualizer.prototype.setRacking = function(racking) {
 	});
 };
 
-//NOTE: 'from' and 'to' should have .bed and .needle members
-FlatTransferVisualizer.prototype.xfer = function(from, to) {
+if (typeof(require) !== 'undefined' && 'main' in require && require.main === module) {
+	//running from command line:
+	if (process.argv.length !== 4) {
+		console.error("Usage:\n ./flat-transfer-visualizer.js <xfers.xout> <out.svg>\n Writes each pass to outNN.svg");
+		process.exit(1);
+	}
+	const inFile = process.argv[2];
+	const outFile = process.argv[3];
 
-	this.requestDraw();
-};
-
-
-function init() {
-	var elts = document.getElementsByClassName("flatXferVis");
-	for (var i = 0; i < elts.length; ++i) {
-		var elt = elts[i];
-		if (elt.tagName !== 'DIV') continue;
-		new FlatTransferVisualizer(elt);
+	if (!outFile.endsWith(".svg")) {
+		console.error("Expecting output file to end with \".svg\"");
+		process.exit(1);
 	}
 
+	const fs = require('fs');
+	var document = {
+		createElement:function(){ return document; },
+		appendChild:function(){ },
+		getContext:function() { return {}; },
+		style:{},
+		innerHTML:';{ "offsets":[0], "firsts":[0], "transferMax":3 }',
+		addEventListener:function() { },
+	};
+	var window = {
+		requestAnimationFrame:function(){ },
+	};
+	let fxv = new FlatTransferVisualizer(document);
+	fxv.parseMoves(fs.readFileSync(inFile, 'utf8'));
+
+	let index = 0;
+	do {
+		while (fxv.animations.length) {
+			fxv.animations.shift().finish();
+		}
+		let fn = index.toString();
+		while (fn.length < 2) fn = "0" + fn;
+		fs.writeFileSync(outFile.substr(0,outFile.length-4) + fn + ".svg", fxv.getSVG(), 'utf8');
+		++index;
+	} while (fxv.nextPass());
+
+
+} else {
+	//running in browser:
+	function init() {
+		var elts = document.getElementsByClassName("flatXferVis");
+		for (var i = 0; i < elts.length; ++i) {
+			var elt = elts[i];
+			if (elt.tagName !== 'DIV') continue;
+			new FlatTransferVisualizer(elt);
+		}
+
+	}
+	init();
 }
 
-init();
