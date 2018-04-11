@@ -227,6 +227,8 @@ FlatTransferVisualizer.prototype.parseMoves = function parseMoves(moves) {
 	this.racking = 0;
 	this.maxRacking = 8;
 
+	this.maxUsedRacking = 0;
+
 	this.loops = []; // {start:i, offset:o, first:true/false}
 	this.moves = []; // {from:, to:}
 	this.nextMove = 0;
@@ -296,6 +298,8 @@ FlatTransferVisualizer.prototype.parseMoves = function parseMoves(moves) {
 				this.minNeedle = Math.min(this.minNeedle, from.needle, to.needle);
 				this.maxNeedle = Math.max(this.maxNeedle, from.needle, to.needle);
 
+				this.maxUsedRacking = Math.max(this.maxUsedRacking, Math.abs(from.needle - to.needle));
+
 				this.moves.push({from:from, to:to});
 			} else {
 				throw "Unknown op '" + op[0] + "'";
@@ -314,7 +318,7 @@ FlatTransferVisualizer.prototype.parseMoves = function parseMoves(moves) {
 
 	//handle various width/height tomfoolery:
 
-	let minWidth = (this.maxNeedle - this.minNeedle + 1 + this.maxRacking) * NEEDLE_SPACING;
+	let minWidth = (this.maxNeedle - this.minNeedle + 1 + 2 * this.maxUsedRacking) * NEEDLE_SPACING;
 	let minHeight = (NEEDLE_HEIGHT + BED_GAP_HEIGHT + NEEDLE_HEIGHT + UNDER_HEIGHT);
 
 	this.baseWidth = minWidth;
@@ -407,21 +411,43 @@ FlatTransferVisualizer.prototype.getSVG = function() {
 	this.scale = 1.0;
 	let canvas = { width:this.baseWidth, height:this.baseHeight };
 
-	let xf = [1,0, 0,1, 0,0];
 	let pathData = '';
 	let commands = [];
+	let defs = [];
+	let xf = [1,0, 0,1, 0,0];
+
+	let freshIdx = 0;
 
 	let svg = {
-		resetTransform : function() { xf = [1,0, 0,1, 0,0]; },
+		resetTransform : function() {
+			this.setTransform(1,0, 0,1, 0,0);
+		},
 		setTransform : function(...args) {
 			console.assert(args.length === 6, "setTransform takes exactly six arguments");
 			xf = args.slice();
 		},
 
-		createLinearGradient : function(x0, y0, x1, y1) {
+		createLinearGradient : function(x1, y1, x2, y2) {
 			return {
-				addColorStop: function() {
-					//TODO
+				isLinearGradient:true,
+				x1:x1, y1:y1, x2:x2, y2:y2,
+				stops:[],
+				addColorStop: function(offset, color) {
+					delete this.id;
+					let opacity = 1;
+					let m = color.match(/^rgba\((\d+,\d+,\d+),(\d?[.]\d?)\)$/);
+					if (m) {
+						color = 'rgb(' + m[1] + ')';
+						opacity = m[2];
+					}
+					this.stops.push('<stop offset="' + offset + '" stop-color="' + color + '" stop-opacity="' + opacity + '" />');
+				},
+				getId: function() {
+					if (this.id) return this.id;
+					let id = 'grad' + (freshIdx++);
+					defs.push('<linearGradient id="' + id + '" gradientUnits="userSpaceOnUse" x1="' + this.x1 + '" y1="' + this.y1 + '" x2="' + this.x2 + '" y2="' + this.y2 + '">' + this.stops.join('') + '</linearGradient>');
+					this.id = id;
+					return id;
 				}
 			};
 		},
@@ -433,7 +459,13 @@ FlatTransferVisualizer.prototype.getSVG = function() {
 		lineJoin:'miter',
 
 		fillRect : function(x,y,w,h) {
-			commands.push('<rect style="fill:' + this.fillStyle + ';stroke:none;" x="' + x + '" y="' + y + '" width="' + w + '"  height="' + h + '" />');
+			let fill;
+			if (this.fillStyle.getId) {
+				fill = 'url(#' + this.fillStyle.getId() + ')';
+			} else {
+				fill = this.fillStyle;
+			}
+			commands.push('<rect style="fill:' + fill + ';stroke:none;" x="' + x + '" y="' + y + '" width="' + w + '"  height="' + h + '" />');
 		},
 		beginPath : function() {
 			pathData = '';
@@ -460,6 +492,7 @@ FlatTransferVisualizer.prototype.getSVG = function() {
 
 	this.drawHelper(canvas, svg);
 
+	commands.unshift('<defs>\n' + defs.join("\n") + '</defs>');
 	commands.unshift('<svg width="' + 4 * this.baseWidth + 'px" height="' + 4 * this.baseHeight + 'px" viewBox="0 0 '+ this.baseWidth+' '+this.baseHeight+'">');
 	commands.push('</svg>');
 
@@ -497,10 +530,10 @@ FlatTransferVisualizer.prototype.drawHelper = function(canvas, ctx) {
 
 	const backLeft = 0.5 * ctx.width
 		- 0.5 * NEEDLE_SPACING * (this.maxNeedle + this.minNeedle)
-		+ this.racking * 0.5 * NEEDLE_SPACING;
+		+ this.racking * NEEDLE_SPACING;
 	const frontLeft = 0.5 * ctx.width
 		- 0.5 * NEEDLE_SPACING * (this.maxNeedle + this.minNeedle)
-		- this.racking * 0.5 * NEEDLE_SPACING;
+		/* - this.racking * 0.5 * NEEDLE_SPACING */;
 	
 	let onBackSlider = [];
 	let onFrontSlider = [];
@@ -753,7 +786,13 @@ if (typeof(require) !== 'undefined' && 'main' in require && require.main === mod
 		for (var i = 0; i < elts.length; ++i) {
 			var elt = elts[i];
 			if (elt.tagName !== 'DIV') continue;
-			new FlatTransferVisualizer(elt);
+			let fxv = new FlatTransferVisualizer(elt);
+			/*
+			//DEBUG svg output:
+			let d = document.createElement("div");
+			d.innerHTML = fxv.getSVG();
+			document.body.append(d);
+			*/
 		}
 
 	}
