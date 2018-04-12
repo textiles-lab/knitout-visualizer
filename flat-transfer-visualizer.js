@@ -5,25 +5,45 @@ const NEEDLE_SPACING = 15;
 const NEEDLE_WIDTH = 2;
 const SLIDER_WIDTH = 1;
 
-const LOOP_GAP = 1;
-const YARN_RADIUS = 1.5;
+const LOOP_GAP = 0.75;
+const YARN_RADIUS = 1.5 * (10 / 12);
+const YARN_LINEWIDTH = 2 * YARN_RADIUS; //1.5 * (10 / 12);
+//const YARN_INNER_LINEWIDTH = 2 * 1.5 * (8 / 12);
 const LOOP_WIDTH = NEEDLE_WIDTH + 2.0 * SLIDER_WIDTH + 2.0 * YARN_RADIUS;
+
+const XFER_ARROW_SIZE = 2;
+const XFER_ARROW_LINEWIDTH = 2 * 1.5 / 12;
+const XFER_ARROW_FILL = '#fff';
+const XFER_ARROW_STROKE = '#000';
+const XFER_ARROW_STACK_FILL = '#f00';
+const XFER_ARROW_STACK_STROKE = '#731111';
+
+const OLD_LOOP_FILL = XFER_ARROW_FILL; //'rgba(255,255,255,0.5)'; //XFER_ARROW_FILL;
+const OLD_LOOP_STROKE = XFER_ARROW_STROKE; //'rgb(128,128,128)';
+const OLD_LOOP_LINEWIDTH = XFER_ARROW_LINEWIDTH;
 
 const INDICATOR_OFFSET = 1;
 const INDICATOR_GAP = -0.5;
 const INDICATOR_WIDTH = 2;
 
 const LOOP_COLORS = [
-	['#e11', '#a11', '#911'],
-	['#e11', '#b11', '#911'],
-	['#e11', '#c11', '#911'],
+	['#000', '#242424', '#444'],
+	['#1a1a1a', '#2e2e2e', '#444'],
+	['#333333', '#3c3c3c', '#444']
+	//['#e11', '#a11', '#911'],
+	//['#e11', '#b11', '#911'],
+	//['#e11', '#c11', '#911'],
 ];
 
 const FIRST_COLORS = [
-	['#e81', '#a51'],
-	['#e81', '#b61'],
-	['#e81', '#c71'],
+	['#b88bd9', '#ac78d3'],
+	['#ae8bd9', '#9f78d3'],
+	['#c48bd9', '#b878d3']
+	//['#e81', '#a51'],
+	//['#e81', '#b61'],
+	//['#e81', '#c71'],
 ];
+
 
 //
 //  | |  \_ ?? SLIDER_SOMETHING ?? (or just part of BED_GAP_HEIGHT, I guess)
@@ -141,7 +161,8 @@ FlatTransferVisualizer.prototype.nextPass = function nextPass() {
 	// (loops get re-assigned?)
 	// retract 'to' hook/slider, compacting loops
 	this.queueAnimation({
-		phase:0,
+		phase:-1,
+		needles:this.needles,
 		update:function(elapsed) {
 			var moving = false;
 			function extend(n){
@@ -156,6 +177,12 @@ FlatTransferVisualizer.prototype.nextPass = function nextPass() {
 					n.extend = Math.max(0.0, n.extend - elapsed * EXTEND_SPEED);
 					moving = true;
 				}
+			}
+			if (this.phase === -1) {
+				for (var n in this.needles) {
+					this.needles[n].oldLoops = [];
+				}
+				this.phase = 0;
 			}
 			if (this.phase === 0) {
 				//extend 'from':
@@ -179,6 +206,7 @@ FlatTransferVisualizer.prototype.nextPass = function nextPass() {
 					let from = froms[i];
 					let to = tos[i];
 					to.loops.push(...from.loops.reverse());
+					from.oldLoops = from.loops.slice();
 					from.loops = [];
 				}
 			}
@@ -200,11 +228,19 @@ FlatTransferVisualizer.prototype.nextPass = function nextPass() {
 		},
 		finish:function() {
 			//console.log("Finishing from/to"); //DEBUG
+			if (this.phase < 2) {
+				for (var n in this.needles) {
+					this.needles[n].oldLoops = [];
+				}
+			}
 			for (let i = 0; i < froms.length; ++i) {
 				let from = froms[i];
 				let to = tos[i];
-				to.loops.push(...from.loops.reverse());
-				from.loops = [];
+				if (this.phase < 2) {
+					to.loops.push(...from.loops.reverse());
+					from.oldLoops = from.loops.slice();
+					from.loops = [];
+				}
 				delete to.min;
 				delete to.max;
 			}
@@ -216,7 +252,7 @@ FlatTransferVisualizer.prototype.nextPass = function nextPass() {
 FlatTransferVisualizer.prototype.getNeedle = function getNeedle(name) {
 	if (!(name in this.needles)) {
 		var bn = parseBedNeedle(name);
-		this.needles[name] = {bed:bn.bed, needle:bn.needle, loops:[], extend:0.0};
+		this.needles[name] = {bed:bn.bed, needle:bn.needle, loops:[], oldLoops:[], extend:0.0};
 	}
 	return this.needles[name];
 };
@@ -476,6 +512,10 @@ FlatTransferVisualizer.prototype.getSVG = function() {
 		lineTo : function(x,y) {
 			pathData += 'L' + x + ' ' + y;
 		},
+		arcTo : function(x0,y0, x1, y1, r) {
+			//this is a hack because I know we're always drawing 90-degree arcs in a consistent orientation
+			pathData += 'A' + r + ' ' + r + ' ' + 0 + ' ' + 0 + ' ' + 0 + ' ' + x1 + ' ' + y1;
+		},
 		bezierCurveTo : function(x1,y1,x2,y2,x,y) {
 			pathData += 'C' + x1 + ' ' + y1 + ' ' + x2 + ' ' + y2 + ' ' + x + ' ' + y;
 		},
@@ -542,24 +582,30 @@ FlatTransferVisualizer.prototype.drawHelper = function(canvas, ctx) {
 		onFrontSlider.push(0);
 	}
 
+	this.loops.forEach(function(l){
+		delete l.oldAt;
+	});
+
 	//layout loops on needles:
 	for (let name in this.needles) {
 		const n = this.needles[name];
-		let x,y,prevX,yStep;
+		let x,y,oldY,prevX,yStep;
 		if (n.bed === 'b' || n.bed === 'bs') {
 			x = n.needle * NEEDLE_SPACING + backLeft;
 			prevX = x;
-			y = NEEDLE_HEIGHT + n.extend;
+			oldY = y = NEEDLE_HEIGHT + n.extend;
 			if (n.bed === 'b') {
-				y -= n.loops.length * (2.0 * YARN_RADIUS + LOOP_GAP);
+				oldY -= n.oldLoops.length * (2.0 * YARN_RADIUS + LOOP_GAP) + LOOP_GAP;
+				y -= n.loops.length * (2.0 * YARN_RADIUS + LOOP_GAP) + LOOP_GAP;
 			}
 			yStep = 1.0;
 		} else if (n.bed === 'f' || n.bed === 'fs') {
 			x = n.needle * NEEDLE_SPACING + frontLeft;
 			prevX = x;
-			y = NEEDLE_HEIGHT + BED_GAP_HEIGHT - n.extend;
+			oldY = y = NEEDLE_HEIGHT + BED_GAP_HEIGHT - n.extend;
 			if (n.bed === 'f') {
-				y += n.loops.length * (2.0 * YARN_RADIUS + LOOP_GAP);
+				oldY += n.oldLoops.length * (2.0 * YARN_RADIUS + LOOP_GAP) + LOOP_GAP;
+				y += n.loops.length * (2.0 * YARN_RADIUS + LOOP_GAP) + LOOP_GAP;
 			}
 			yStep = -1.0;
 		} else {
@@ -589,6 +635,14 @@ FlatTransferVisualizer.prototype.drawHelper = function(canvas, ctx) {
 			};
 			l.prevX = prevX;
 		}, this);
+		n.oldLoops.forEach(function(l, i){
+			let newY = oldY + (LOOP_GAP + YARN_RADIUS + i * (2.0 * YARN_RADIUS + LOOP_GAP)) * yStep;
+			l.oldAt = {
+				x:x,
+				y:newY
+			};
+		}, this);
+
 	}
 
 	//update previous loop positions:
@@ -623,7 +677,7 @@ FlatTransferVisualizer.prototype.drawHelper = function(canvas, ctx) {
 		ctx.lineTo(l.prevX - 0.3 * LOOP_WIDTH, NEEDLE_HEIGHT + BED_GAP_HEIGHT + NEEDLE_HEIGHT + UNDER_HEIGHT);
 
 		ctx.lineCap = 'round';
-		ctx.lineWidth = 2.0 * YARN_RADIUS;
+		ctx.lineWidth = YARN_LINEWIDTH;
 		ctx.strokeStyle = (l.first ? FIRST_COLORS : LOOP_COLORS)[(l.start - this.minNeedle) % LOOP_COLORS.length][1];
 		ctx.stroke();
 	}, this);
@@ -636,7 +690,7 @@ FlatTransferVisualizer.prototype.drawHelper = function(canvas, ctx) {
 		ctx.lineTo(l.prevX + 0.5 * LOOP_WIDTH, NEEDLE_HEIGHT + BED_GAP_HEIGHT + NEEDLE_HEIGHT + UNDER_HEIGHT);
 
 		ctx.lineCap = 'round';
-		ctx.lineWidth = 2.0 * YARN_RADIUS;
+		ctx.lineWidth = YARN_LINEWIDTH;
 		ctx.strokeStyle = LOOP_COLORS[(l.start - this.minNeedle) % LOOP_COLORS.length][2];
 		ctx.stroke();
 	}, this);
@@ -681,9 +735,83 @@ FlatTransferVisualizer.prototype.drawHelper = function(canvas, ctx) {
 		ctx.fillRect(x + 0.5 * NEEDLE_WIDTH, y + extendSlider - NEEDLE_HEIGHT, SLIDER_WIDTH, h + NEEDLE_HEIGHT);
 	}
 
+	function roundRect(x,y,width,height,r) {
+		r = Math.min(r, 0.5 * width, 0.5 * height);
+		let x0 = x;
+		let x1 = x + r;
+		let x2 = x + width - r;
+		let x3 = x + width;
+		let y0 = y;
+		let y1 = y + r;
+		let y2 = y + height - r;
+		let y3 = y + height;
+		ctx.moveTo(x0, y2);
+		ctx.arcTo(x0, y3, x1, y3, r);
+		ctx.lineTo(x2, y3);
+		ctx.arcTo(x3, y3, x3, y2, r);
+		ctx.lineTo(x3, y1);
+		ctx.arcTo(x3, y0, x2, y0, r);
+		ctx.lineTo(x1, y0);
+		ctx.arcTo(x0, y0, x0, y1, r);
+		ctx.closePath();
+	}
+
+	if (this.animations.length == 0) {
+		//draw old loops on needles:
+		this.loops.forEach(function(l){
+			if (!('oldAt' in l)) return;
+			ctx.beginPath();
+			let r = 0.5 * YARN_LINEWIDTH - 0.5 * OLD_LOOP_LINEWIDTH;
+			roundRect(l.oldAt.x - 0.5 * LOOP_WIDTH - r, l.oldAt.y - r,
+				LOOP_WIDTH + 2.0 * r, 2.0 * r,
+				r);
+			ctx.fillStyle = OLD_LOOP_FILL;
+			ctx.lineWidth = OLD_LOOP_LINEWIDTH;
+			ctx.strokeStyle = OLD_LOOP_STROKE;
+			ctx.fill();
+			ctx.stroke();
+		},this);
+
+		//draw xfer arrows:
+		for (let i = this.minNeedle; i <= this.maxNeedle; ++i) {
+			let x, d, c;
+			let y = NEEDLE_HEIGHT + 0.5 * BED_GAP_HEIGHT;
+			if (('b' + i) in this.needles  && this.needles['b'+i].oldLoops.length > 0) {
+				x = i * NEEDLE_SPACING + backLeft;
+				d = 1;
+				c = this.needles['b'+i].oldLoops.length;
+			} else if (('bs' + i) in this.needles  && this.needles['bs'+i].oldLoops.length > 0) {
+				x = i * NEEDLE_SPACING + backLeft;
+				d = 1;
+				c = this.needles['bs'+i].oldLoops.length;
+			} else if (('f' + i) in this.needles  && this.needles['f'+i].oldLoops.length > 0) {
+				x = i * NEEDLE_SPACING + frontLeft;
+				d = -1;
+				c = this.needles['f'+i].oldLoops.length;
+			} else if (('fs' + i) in this.needles && this.needles['fs'+i].oldLoops.length > 0) {
+				x = i * NEEDLE_SPACING + frontLeft;
+				d = -1;
+				c = this.needles['fs'+i].oldLoops.length;
+			} else {
+				continue;
+			}
+			ctx.beginPath();
+			ctx.moveTo(x, y + XFER_ARROW_SIZE * d);
+			ctx.lineTo(x + 2 * d, y - XFER_ARROW_SIZE * d);
+			ctx.lineTo(x - 2 * d, y - XFER_ARROW_SIZE * d);
+			ctx.closePath();
+			ctx.fillStyle = (c == 1 ? XFER_ARROW_FILL : XFER_ARROW_STACK_FILL);
+			ctx.fill();
+			ctx.lineWidth = XFER_ARROW_LINEWIDTH;
+			ctx.strokeStyle = (c == 1 ? XFER_ARROW_STROKE : XFER_ARROW_STACK_STROKE);
+			ctx.stroke();
+		}
+	}
+
+
 	//draw loops on needles:
 	ctx.lineCap = 'round';
-	ctx.lineWidth = 2.0 * YARN_RADIUS;
+	ctx.lineWidth = YARN_LINEWIDTH;
 	this.loops.forEach(function(l){
 		ctx.beginPath();
 		ctx.moveTo(l.at.x - 0.5 * LOOP_WIDTH, l.at.y);
@@ -722,8 +850,10 @@ FlatTransferVisualizer.prototype.drawHelper = function(canvas, ctx) {
 FlatTransferVisualizer.prototype.setRacking = function(racking) {
 	let fxv = this;
 	this.queueAnimation({
+		needles:this.needles,
 		update:function(elapsed){
 			if (fxv.racking === racking) {
+				this.finish();
 				return elapsed;
 			} else if (fxv.racking < racking) {
 				fxv.racking = Math.min(fxv.racking + 2.5 * elapsed, racking);
@@ -733,6 +863,9 @@ FlatTransferVisualizer.prototype.setRacking = function(racking) {
 			return 0.0;
 		},
 		finish:function(elapsed){
+			for (var n in this.needles) {
+				this.needles[n].oldLoops = [];
+			}
 			fxv.racking = racking;
 		}
 	});

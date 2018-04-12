@@ -41,20 +41,39 @@
 
 <input id="file" type="file" />
 <label id="fileLabel" for="file"><span>Choose a .xout file</span> or drag one into the window to visualize it.</label>
-
 <div class="flatXferVis">
 ; {"offsets":[0,1,0,-1,1,0,-1,0,0],
 ;   "firsts":[0,0,0, 1,1,0, 0,0,0],
 ;   "transferMax":8}
+xfer f1 bs1
+xfer bs1 f1
 xfer f1 b1
 xfer f2 b2
 xfer f3 b3
 xfer b1 f2
 xfer b3 f2
+xfer f2 b2
 xfer b2 f2
 xfer f4 bs4
 xfer bs4 f5
 </div>
+<!--
+;{"offsets":[1,0,-1,1,0,0],"firsts":[false,false,true,true,false,false],"orders":[0,0,0,0,0,0],"transferMax":8,"xferredStacks":0,"xferredEmpty":0}
+xfer f2 b2
+xfer f5 b5
+xfer f1 b1
+xfer f3 b3
+xfer f0 b0
+xfer f4 b4
+xfer b2 f1
+xfer b5 f5
+xfer b1 f1
+xfer b3 f4
+xfer b0 f1
+xfer b4 fs5
+xfer fs5 b5
+xfer b5 f4
+--!>
 
 <p>Click to advance to the next pass.</p>
 
